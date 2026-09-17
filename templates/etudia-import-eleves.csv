@@ -1,0 +1,2 @@
+prenom,nom,email,telephone,classe,parent_prenom,parent_nom,parent_email,parent_telephone
+Exemple,Eleve,eleve@example.org,+22670000000,3e B,Exemple,Parent,parent@example.org,+22671000000

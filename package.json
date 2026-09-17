@@ -1,0 +1,10 @@
+{
+  "name": "etudia",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Fondation locale multi-établissements d’Étudia",
+  "scripts": {
+    "dev": "node server/index.cjs",
+    "start": "node server/index.cjs"
+  }
+}
