@@ -1,0 +1,4 @@
+# Données locales et fichiers temporaires
+work/
+*.log
+.DS_Store
