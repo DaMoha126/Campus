@@ -4,6 +4,8 @@
 
 Consultez [INSTALLATION_WINDOWS.md](INSTALLATION_WINDOWS.md), puis lancez `Demarrer-Etudia.cmd`. Cette version utilise ses propres données sous `pocketbase/pb_data`, sans modifier la base Node/SQLite ci-dessous.
 
+Le module **Inscriptions & paiements** permet d’affecter un élève à une classe par année, de définir les frais, enregistrer les versements partiels et consulter les soldes, reçus et exports CSV. Consultez la section de mise à jour du guide pour conserver vos données existantes.
+
 Plateforme scolaire en construction. Cette étape fournit une administration connectée avec données SQLite persistantes : installation initiale, connexion, années scolaires, classes, matières et création des comptes.
 
 ## Démarrer

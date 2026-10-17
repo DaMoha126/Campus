@@ -45,3 +45,20 @@ Migration et tests API exécutés avec le binaire officiel PocketBase 0.40.5 sou
 Pour exécuter le test d’intégration si Node.js 24 est installé : définissez `POCKETBASE_BIN` vers le binaire PocketBase puis lancez `node --test test/pocketbase.cjs` depuis le dépôt. Sans cette variable, le test PocketBase est explicitement ignoré.
 
 Sources : https://pocketbase.io/docs/going-to-production/ et https://pocketbase.io/docs/js-migrations/
+
+## Mise à jour : inscriptions et paiements
+
+1. Arrêtez PocketBase avec **Ctrl+C** dans sa fenêtre et faites une copie de sécurité du dossier `pocketbase\pb_data` vers un autre emplacement.
+2. Téléchargez la dernière version de la branche `codex/pocketbase-local` et extrayez le ZIP dans un **autre dossier**.
+3. Depuis ce nouveau dossier, copiez uniquement les trois sous-dossiers **`pocketbase\pb_public`**, **`pocketbase\pb_hooks`** et **`pocketbase\pb_migrations`** vers le dossier `pocketbase` de votre installation actuelle. Fusionnez les dossiers et remplacez les fichiers demandés. **Ne supprimez et ne remplacez pas `pb_data`.**
+4. Relancez `Demarrer-Etudia.cmd` dans votre installation actuelle. La nouvelle migration ajoute les collections d’inscriptions et de versements, sans effacer les comptes, classes ou matières existants. Actualisez le navigateur avec **Ctrl+F5**, puis reconnectez-vous.
+
+### Utiliser le registre
+
+- **Classes & comptes** : créez l’année scolaire, les classes et les comptes de rôle **Élève** si nécessaire.
+- **Inscriptions & paiements** : choisissez l’année, l’élève, la classe et la date d’inscription. Indiquez séparément les frais d’inscription et la scolarité annuelle, en FCFA entiers. Cliquez sur **Inscrire et affecter à la classe**.
+- Dans le registre, cliquez sur **Ouvrir** pour consulter le dossier. Vous pouvez changer de classe dans la même année et ajuster les frais ; le total ne peut pas devenir inférieur aux versements déjà enregistrés.
+- Enregistrez chaque versement reçu (montant, date, mode et référence facultative). Il s’agit d’une saisie manuelle, sans opération bancaire. L’état passe de **Non réglé** à **Partiel**, puis **Soldé**. Un dossier avec zéro frais est **Sans frais**.
+- Consultez l’historique, imprimez un reçu, ou utilisez **Exporter CSV** pour le registre de l’année sélectionnée. Les informations sont réservées à l’administration dans cette étape.
+
+Les doubles inscriptions élève/année, les affectations à une classe pleine et les versements supérieurs au solde sont refusés côté serveur. Les versements sont conservés sans modification/suppression depuis l’application ; l’annulation comptable, les remboursements, les échéanciers et les relances ne sont pas encore disponibles. Vérifiez chaque saisie avant confirmation. La référence du reçu correspond à l’identifiant unique du versement.
