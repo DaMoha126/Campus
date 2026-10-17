@@ -1,5 +1,9 @@
 # Étudia
 
+## Version locale PocketBase (Windows)
+
+Consultez [INSTALLATION_WINDOWS.md](INSTALLATION_WINDOWS.md), puis lancez `Demarrer-Etudia.cmd`. Cette version utilise ses propres données sous `pocketbase/pb_data`, sans modifier la base Node/SQLite ci-dessous.
+
 Plateforme scolaire en construction. Cette étape fournit une administration connectée avec données SQLite persistantes : installation initiale, connexion, années scolaires, classes, matières et création des comptes.
 
 ## Démarrer
