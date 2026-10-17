@@ -3,3 +3,7 @@ work/
 *.log
 .DS_Store
 server/data/
+
+# PocketBase local : données, mots de passe et exécutables hors Git
+pocketbase/pb_data/
+pocketbase/runtime/
