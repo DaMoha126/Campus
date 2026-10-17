@@ -5,6 +5,10 @@
   "description": "Fondation locale multi-établissements d’Étudia",
   "scripts": {
     "dev": "node server/index.cjs",
-    "start": "node server/index.cjs"
+    "start": "node server/index.cjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }
