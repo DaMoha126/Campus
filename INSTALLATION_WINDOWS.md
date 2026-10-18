@@ -16,7 +16,7 @@ Gardez la fenêtre ouverte. Pour arrêter proprement : **Ctrl+C**. Pour relancer
 
 1. Dans la fenêtre PocketBase, ouvrez **le lien d’installation affiché**, contenant `/_/#/pbinstal/…`, pour créer votre compte **superutilisateur PocketBase**. Conservez ces identifiants de maintenance en privé. Si aucun lien n’apparaît, consultez `http://127.0.0.1:8090/_/`.
 2. Dans le tableau de bord PocketBase, ouvrez la collection **establishments**, puis **New record**. Saisissez `name` (nom de votre école), `country` et éventuellement `city`. Enregistrez.
-3. Ouvrez **school_users**, puis **New record**. Saisissez votre email, un mot de passe d’au moins 12 caractères, `first_name`, `last_name`, sélectionnez `role = administrator` et votre établissement dans `establishment_id`. Activez `emailVisibility` pour que l’adresse figure dans l’annuaire administratif. Enregistrez.
+3. Ouvrez **school_users**, puis **New record**. Saisissez votre email, un mot de passe d’au moins 8 caractères, `first_name`, `last_name`, sélectionnez `role = administrator` et votre établissement dans `establishment_id`. Activez `emailVisibility` pour que l’adresse figure dans l’annuaire administratif. Enregistrez.
 4. Ouvrez **http://127.0.0.1:8090/** et connectez-vous avec ce compte scolaire. Le compte superutilisateur sert uniquement au tableau de bord technique.
 5. Ajoutez votre année scolaire, vos classes, matières et comptes depuis Étudia. Les identifiants initiaux sont à transmettre personnellement ; aucun email n’est envoyé automatiquement.
 
@@ -62,3 +62,8 @@ Sources : https://pocketbase.io/docs/going-to-production/ et https://pocketbase.
 - Consultez l’historique, imprimez un reçu, ou utilisez **Exporter CSV** pour le registre de l’année sélectionnée. Les informations sont réservées à l’administration dans cette étape.
 
 Les doubles inscriptions élève/année, les affectations à une classe pleine et les versements supérieurs au solde sont refusés côté serveur. Les versements sont conservés sans modification/suppression depuis l’application ; l’annulation comptable, les remboursements, les échéanciers et les relances ne sont pas encore disponibles. Vérifiez chaque saisie avant confirmation. La référence du reçu correspond à l’identifiant unique du versement.
+
+
+### Mots de passe scolaires
+
+Le minimum est désormais de **8 caractères**, dans les formulaires et la collection `school_users`. Lettres, chiffres et symboles sont acceptés. Les mots de passe existants ne sont pas changés. Cette règle ne modifie pas la collection de maintenance `_superusers`. Pour appliquer cette mise à jour, recopiez `pb_public` et `pb_migrations` comme indiqué ci-dessus, puis redémarrez PocketBase et actualisez avec Ctrl+F5.

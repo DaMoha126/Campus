@@ -9,6 +9,10 @@ try{const init=spawnSync(binary,['superuser','create','root@test.invalid',passwo
 const a=(await record('establishments',{name:'École A',country:'BF'},root)).data,b=(await record('establishments',{name:'École B',country:'BF'},root)).data;
 assert.equal((await record('school_users',user('admin@test.invalid',a.id,'administrator'),root)).status,200);
 const admin=(await req('collections/school_users/auth-with-password',{identity:'admin@test.invalid',password})).data.token;assert.ok(admin);
+const eight={...user('eight@test.invalid',a.id,'student'),password:'Abcd1234',passwordConfirm:'Abcd1234'};
+assert.equal((await record('school_users',eight,admin)).status,200);
+assert.equal((await record('school_users',{...eight,email:'seven@test.invalid',password:'Abcd123',passwordConfirm:'Abcd123'},admin)).status,400);
+
 assert.equal((await record('subjects',{name:'Sans connexion',establishment_id:a.id})).status,400);
 assert.equal((await record('school_users',user('student@test.invalid',a.id,'student'),admin)).status,200);
 const student=(await req('collections/school_users/auth-with-password',{identity:'student@test.invalid',password})).data;
