@@ -315,7 +315,7 @@ function gradesScreen(d) {
                   "Élève",
                   schoolClassRoster(d, assignment?.classroom),
                   (p) => p.id,
-                  fullName,
+                  (p) => fullName(p) + (p.login_id ? " · " + p.login_id : ""),
                 ) +
                 select(
                   "status",
@@ -376,7 +376,7 @@ function gradesScreen(d) {
                   ),
                 ],
                 roster.map((p) => [
-                  esc(fullName(p)),
+                  `<span class="student-name" data-grade-student="${esc(p.id)}">${esc(fullName(p))}</span>${p.login_id ? `<small class="grade-comment">${esc(p.login_id)}</small>` : ""}`,
                   ...evaluations.map((e) => {
                     const grade = grades.get(e.id + ":" + p.id);
                     const value = !grade
