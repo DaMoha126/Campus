@@ -368,5 +368,44 @@ td form textarea {
   border: 1px solid #c6a332;
   border-radius: 10px;
 }
-.demo-banner p { margin: 8px 0 0; }
-@media print { .demo-banner { display: none; } }
+.demo-banner p {
+  margin: 8px 0 0;
+}
+@media print {
+  .demo-banner {
+    display: none;
+  }
+}
+
+.class-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.class-cards .panel {
+  margin: 0;
+}
+.grade-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.grade-filters label {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+.grade-subject + .grade-subject {
+  border-top: 1px solid #dbe1ed;
+  margin-top: 24px;
+  padding-top: 16px;
+}
+.grade-comment {
+  display: block;
+  color: #64748b;
+  margin-top: 4px;
+  max-width: 240px;
+}
+#class-detail {
+  scroll-margin-top: 16px;
+}

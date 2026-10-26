@@ -83,3 +83,11 @@ Quinze matières sont préenregistrées par établissement : français, mathéma
 Dans **Pédagogie & communications → Organisation → Affecter un enseignant**, choisissez le professeur, la classe et la matière dans les listes, puis indiquez le coefficient. La liste des matières est triée par ordre alphabétique. Les matières ne sont pas affectées automatiquement à toutes les classes.
 
 Les matières déjà présentes et leurs affectations sont conservées ; les noms usuels (Maths, SVT, EPS, etc.) sont reconnus pour éviter de recréer leur équivalent. Vous pouvez toujours ajouter une matière spécifique dans la rubrique Matières.
+
+## Classes et rangement des notes
+
+L’administration dispose d’un accès direct **Classes** et **Notes** depuis les onglets supérieurs. Dans l’espace pédagogique, **Classes** permet de filtrer par année, d’ouvrir une classe et de consulter ses élèves, parents liés, matières et enseignants. La création et la modification des classes sont réservées à l’administration. Les enseignants disposent d’une consultation de leurs classes uniquement.
+
+Dans **Notes & évaluations**, choisissez la classe, la matière et la période. Les notes sont regroupées par classe puis par matière, avec une ligne par élève et une colonne par évaluation. Les appréciations restent visibles sous chaque note. Les évaluations à publier et la saisie des notes suivent ces mêmes filtres. **Toutes les classes**, **Toutes les matières** et **Toutes les périodes** permettent d’élargir la vue. Chaque classe indique son année scolaire pour distinguer les années archivées.
+
+Depuis une fiche classe, **Consulter les notes de cette classe** ouvre directement les notes correspondantes. Les familles conservent uniquement leurs données autorisées et les évaluations publiées.

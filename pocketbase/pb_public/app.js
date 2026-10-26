@@ -205,7 +205,7 @@ async function dashboard() {
     )}</select></label><label>Adresse email (facultative)<input name="email" type="email" maxlength="200"></label><label>Téléphone (facultatif)<input name="phone" type="tel" maxlength="40"></label>${field("password", "Mot de passe initial", "password", 'minlength="8" maxlength="200" autocomplete="new-password"')}<button type="submit">Créer le compte</button></form></section><section class="panel"><h2>Matières</h2><p>Les matières générales sont ajoutées par défaut. Vous pouvez ajouter vos matières spécifiques ici, puis choisir la matière lors de l’affectation d’un enseignant.</p><div class="list">${list(d.subjects, (x) => esc(x.name))}</div><form data-action="subjects">${field("name", "Nom de la matière")}<button type="submit">Ajouter la matière</button></form></section><section class="panel wide"><h2>Annuaire de l’établissement</h2><div class="table-wrap"><table><thead><tr><th>Nom</th><th>Rôle</th><th>Email / matricule</th><th>État</th></tr></thead><tbody>${d.people.map((x) => `<tr><td>${esc(x.first_name)} ${esc(x.last_name)}</td><td>${roles[x.role]}</td><td>${esc(x.email)}<br><b>${esc(x.login_id || "")}</b></td><td>${esc(x.status === "active" ? "Actif" : x.status)}</td></tr>`).join("")}</tbody></table>${!d.people.length ? '<p class="empty">Créez le premier compte pour alimenter l’annuaire.</p>' : ""}</div></section></div>`;
   const structure = app.innerHTML;
   app.innerHTML =
-    `<nav class="admin-tabs" aria-label="Administration"><button data-page="workspace">Pédagogie & communications</button><button data-page="enrollments" aria-current="${adminPage === "enrollments" ? "page" : "false"}">Inscriptions & paiements</button><button data-page="structure" aria-current="${adminPage === "structure" ? "page" : "false"}">Classes & comptes</button></nav>` +
+    `<nav class="admin-tabs" aria-label="Administration"><button data-page="classes">Classes</button><button data-page="grades">Notes</button><button data-page="workspace">Pédagogie & communications</button><button data-page="enrollments" aria-current="${adminPage === "enrollments" ? "page" : "false"}">Inscriptions & paiements</button><button data-page="structure" aria-current="${adminPage === "structure" ? "page" : "false"}">Classes & comptes</button></nav>` +
     (adminPage === "structure" ? structure : financeScreen(d));
 }
 async function start() {
@@ -219,6 +219,13 @@ async function start() {
       return auth(false);
     }
     logout.hidden = false;
+    if (
+      me.role === "administrator" &&
+      ["classes", "grades"].includes(adminPage)
+    ) {
+      schoolPage = adminPage;
+      adminPage = "workspace";
+    }
     if (me.role !== "administrator" || adminPage === "workspace")
       return await schoolWorkspace();
     return await dashboard();

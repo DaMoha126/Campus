@@ -5,6 +5,7 @@ let schoolData = null,
   reportPeriod = "";
 const schoolLabels = {
   overview: "Tableau de bord",
+  classes: "Classes",
   setup: "Organisation pédagogique",
   grades: "Notes & évaluations",
   homework: "Devoirs & rendus",
@@ -48,14 +49,19 @@ async function schoolWorkspace() {
   schoolData = await pb("etudia/state");
   const d = schoolData,
     admin = d.me.role === "administrator";
-  if (!admin && schoolPage === "setup") schoolPage = "overview";
+  if (
+    (!admin && schoolPage === "setup") ||
+    (["parent", "student"].includes(d.me.role) && schoolPage === "classes")
+  )
+    schoolPage = "overview";
   app.innerHTML = `<nav class="admin-tabs">${admin ? '<button data-page="enrollments">Inscriptions & paiements</button><button data-page="structure">Classes & comptes</button>' : ""}</nav><div class="workspace"><aside class="workspace-menu"><h2>${esc(d.school.name)}</h2><p>${esc(d.me.first_name)} · ${roles[d.me.role]}</p>${Object.entries(
     schoolLabels,
   )
     .filter(
       ([key]) =>
         (admin || key !== "setup") &&
-        (d.me.role !== "teacher" || key !== "finances"),
+        (d.me.role !== "teacher" || key !== "finances") &&
+        (!["parent", "student"].includes(d.me.role) || key !== "classes"),
     )
     .map(
       ([key, label]) =>
@@ -65,6 +71,354 @@ async function schoolWorkspace() {
       "",
     )}</aside><div class="workspace-main"><span class="badge">${roles[d.me.role]}</span><h1>${schoolLabels[schoolPage]}</h1><div id="school-content">${schoolScreen(d)}</div></div></div>`;
 }
+let gradesClass = null,
+  gradesSubject = "",
+  gradesPeriod = null,
+  classesYear = null,
+  selectedClass = "";
+const schoolCompare = (a, b) =>
+  String(a).localeCompare(String(b), "fr", { numeric: true });
+function schoolClassLabel(d, classroom) {
+  return (
+    classroom.name +
+    " · " +
+    (d.years.find((y) => y.id === classroom.academic_year_id)?.label ||
+      "Année inconnue")
+  );
+}
+function schoolSortedClasses(d) {
+  return [...d.classes].sort(
+    (a, b) =>
+      schoolCompare(
+        d.years.find((y) => y.id === b.academic_year_id)?.label,
+        d.years.find((y) => y.id === a.academic_year_id)?.label,
+      ) || schoolCompare(a.name, b.name),
+  );
+}
+function schoolClassRoster(d, id) {
+  const ids = new Set(
+    d.enrollments.filter((e) => e.class_id === id).map((e) => e.student_id),
+  );
+  return d.people
+    .filter((p) => p.role === "student" && ids.has(p.id))
+    .sort(
+      (a, b) =>
+        schoolCompare(a.last_name, b.last_name) ||
+        schoolCompare(a.first_name, b.first_name),
+    );
+}
+function classesScreen(d) {
+  const admin = d.me.role === "administrator";
+  if (
+    classesYear === null ||
+    (classesYear && !d.years.some((y) => y.id === classesYear))
+  )
+    classesYear = d.years.find((y) => y.is_active)?.id || d.years[0]?.id || "";
+  const classes = schoolSortedClasses(d).filter(
+    (c) => !classesYear || c.academic_year_id === classesYear,
+  );
+  if (!classes.some((c) => c.id === selectedClass))
+    selectedClass = classes[0]?.id || "";
+  const classroom = classes.find((c) => c.id === selectedClass);
+  const roster = schoolClassRoster(d, selectedClass);
+  const assignments = d.assignments
+    .filter((a) => a.classroom === selectedClass)
+    .sort((a, b) =>
+      schoolCompare(
+        d.subjects.find((s) => s.id === a.subject)?.name,
+        d.subjects.find((s) => s.id === b.subject)?.name,
+      ),
+    );
+  return (
+    panel(
+      "Année scolaire",
+      `<label>Année scolaire<select id="classes-year"><option value="">Toutes les années</option>${options(
+        d.years,
+        (y) => y.id,
+        (y) => y.label,
+        classesYear,
+      )}</select></label>`,
+    ) +
+    `<div class="class-cards">${classes.map((c) => panel(esc(c.name), `<p>${esc(d.years.find((y) => y.id === c.academic_year_id)?.label)}</p><p><strong>${schoolClassRoster(d, c.id).length}</strong> élèves inscrits · capacité ${c.capacity}</p><button data-open-class="${esc(c.id)}" aria-pressed="${selectedClass === c.id}">Ouvrir ${esc(c.name)}</button>`)).join("") || '<p class="empty">Aucune classe pour cette année.</p>'}</div>` +
+    (classroom
+      ? `<section class="panel" id="class-detail"><h2>${esc(schoolClassLabel(d, classroom))}</h2><button data-class-notes="${esc(classroom.id)}">Consulter les notes de cette classe</button><h3>Élèves inscrits (${roster.length})</h3>${table(
+          ["Élève", ...(admin ? ["Matricule"] : []), "Parents liés"],
+          roster.map((p) => [
+            esc(fullName(p)),
+            ...(admin ? [esc(p.login_id || "—")] : []),
+            d.links
+              .filter((l) => l.student === p.id)
+              .map((l) => esc(person(d, l.parent)))
+              .join(", ") || "—",
+          ]),
+        )}<h3>Matières et enseignants</h3>${table(
+          ["Matière", "Enseignant", "Coefficient"],
+          assignments.map((a) => [
+            esc(d.subjects.find((s) => s.id === a.subject)?.name),
+            esc(person(d, a.teacher)),
+            a.coefficient,
+          ]),
+        )}${admin ? `<details><summary>Modifier cette classe</summary>${opForm("edit-class", hidden("id", classroom.id) + field("name", "Nom de la classe", "text", `value="${esc(classroom.name)}"`) + field("capacity", "Capacité", "number", `min="1" max="1000" value="${classroom.capacity}"`))}</details>` : ""}</section>`
+      : "") +
+    (admin
+      ? panel(
+          "Créer une classe",
+          d.years.length
+            ? `<form data-action="classes">${field("name", "Nom de la classe")}${select(
+                "yearId",
+                "Année scolaire",
+                d.years,
+                (y) => y.id,
+                (y) => y.label,
+                classesYear,
+              )}${field("capacity", "Capacité", "number", 'min="1" max="1000" value="30"')}<button type="submit">Créer la classe</button></form>`
+            : "<p>Créez d’abord une année scolaire dans Classes & comptes.</p>",
+        )
+      : "")
+  );
+}
+function gradesScreen(d) {
+  const teaching = ["administrator", "teacher"].includes(d.me.role);
+  const classes = schoolSortedClasses(d);
+  if (
+    gradesClass === null ||
+    (gradesClass && !classes.some((c) => c.id === gradesClass))
+  )
+    gradesClass =
+      classes.find(
+        (c) => d.years.find((y) => y.id === c.academic_year_id)?.is_active,
+      )?.id ||
+      classes[0]?.id ||
+      "";
+  const classAssignments = d.assignments.filter(
+    (a) => !gradesClass || a.classroom === gradesClass,
+  );
+  const subjects = d.subjects
+    .filter((s) => classAssignments.some((a) => a.subject === s.id))
+    .sort((a, b) => schoolCompare(a.name, b.name));
+  if (!subjects.some((s) => s.id === gradesSubject)) gradesSubject = "";
+  const assignments = classAssignments.filter(
+    (a) => !gradesSubject || a.subject === gradesSubject,
+  );
+  const years = new Set(
+    classes
+      .filter((c) => !gradesClass || c.id === gradesClass)
+      .map((c) => c.academic_year_id),
+  );
+  const periods = d.periods
+    .filter((p) => years.has(p.year))
+    .sort((a, b) => schoolCompare(a.starts_on, b.starts_on));
+  if (
+    gradesPeriod === null ||
+    (gradesPeriod && !periods.some((p) => p.id === gradesPeriod))
+  )
+    gradesPeriod =
+      periods.find((p) => d.years.find((y) => y.id === p.year)?.is_active)
+        ?.id ||
+      periods[0]?.id ||
+      "";
+  const assignmentIds = new Set(assignments.map((a) => a.id));
+  const evals = d.evaluations
+    .filter(
+      (e) =>
+        assignmentIds.has(e.assignment) &&
+        (!gradesPeriod || e.period === gradesPeriod),
+    )
+    .sort(
+      (a, b) =>
+        schoolCompare(a.held_on, b.held_on) || schoolCompare(a.title, b.title),
+    );
+  if (!evals.some((e) => e.id === schoolEval)) schoolEval = evals[0]?.id || "";
+  const evaluation = evals.find((e) => e.id === schoolEval);
+  const assignment = assignments.find((a) => a.id === evaluation?.assignment);
+  const filters = panel(
+    "Choisir une classe et une matière",
+    `<div class="grade-filters"><label>Classe<select id="grades-class"><option value="" ${gradesClass === "" ? "selected" : ""}>Toutes les classes</option>${options(
+      classes,
+      (c) => c.id,
+      (c) => schoolClassLabel(d, c),
+      gradesClass,
+    )}</select></label><label>Matière<select id="grades-subject"><option value="">Toutes les matières</option>${options(
+      subjects,
+      (s) => s.id,
+      (s) => s.name,
+      gradesSubject,
+    )}</select></label><label>Période<select id="grades-period"><option value="" ${gradesPeriod === "" ? "selected" : ""}>Toutes les périodes</option>${options(
+      periods,
+      (p) => p.id,
+      (p) => p.label + " · " + d.years.find((y) => y.id === p.year)?.label,
+      gradesPeriod,
+    )}</select></label></div>`,
+  );
+  const createPeriods = periods.filter(
+    (p) =>
+      p.year ===
+      classes.find((c) => c.id === assignments[0]?.classroom)?.academic_year_id,
+  );
+  const create = teaching
+    ? panel(
+        "Créer une évaluation",
+        assignments.length && periods.length
+          ? opForm(
+              "evaluation",
+              select(
+                "assignment",
+                "Classe et matière",
+                assignments,
+                (a) => a.id,
+                (a) => titleOf(d, a.id),
+              ) +
+                select(
+                  "period",
+                  "Période",
+                  createPeriods,
+                  (p) => p.id,
+                  (p) =>
+                    p.label +
+                    " · " +
+                    d.years.find((y) => y.id === p.year)?.label,
+                  gradesPeriod,
+                ) +
+                field("title", "Titre") +
+                field("held_on", "Date", "date", `value="${today()}"`) +
+                field(
+                  "maximum",
+                  "Barème",
+                  "number",
+                  'min="1" max="1000" value="20"',
+                ) +
+                field(
+                  "weight",
+                  "Coefficient de l’évaluation",
+                  "number",
+                  'min="0.1" max="20" step="0.1" value="1"',
+                ),
+            )
+          : "<p>Affectez les enseignants et créez les périodes dans Organisation pédagogique.</p>",
+      )
+    : "";
+  const entry =
+    teaching && evaluation
+      ? panel(
+          "Saisir ou corriger une note",
+          `<label>Évaluation<select id="school-evaluation">${options(
+            evals,
+            (e) => e.id,
+            (e) => e.title + " · " + titleOf(d, e.assignment),
+            schoolEval,
+          )}</select></label>` +
+            opForm(
+              "grade",
+              hidden("evaluation", schoolEval) +
+                select(
+                  "student",
+                  "Élève",
+                  schoolClassRoster(d, assignment?.classroom),
+                  (p) => p.id,
+                  fullName,
+                ) +
+                select(
+                  "status",
+                  "Statut",
+                  [
+                    { id: "graded", name: "Noté" },
+                    { id: "absent", name: "Absent (exclu de la moyenne)" },
+                    { id: "exempt", name: "Dispensé" },
+                  ],
+                  (s) => s.id,
+                  (s) => s.name,
+                ) +
+                field(
+                  "score",
+                  "Note",
+                  "number",
+                  `min="0" max="${evaluation.maximum}" step="0.01" value="0"`,
+                ) +
+                '<label>Appréciation<input name="comment" maxlength="1000"></label>',
+            ),
+        )
+      : "";
+  const grades = new Map(
+    d.grades.map((g) => [g.evaluation + ":" + g.student, g]),
+  );
+  const groups = classes
+    .filter((c) => !gradesClass || c.id === gradesClass)
+    .map((c) => {
+      const classGroups = assignments
+        .filter((a) => a.classroom === c.id)
+        .sort((a, b) =>
+          schoolCompare(
+            d.subjects.find((s) => s.id === a.subject)?.name,
+            d.subjects.find((s) => s.id === b.subject)?.name,
+          ),
+        )
+        .map((a) => {
+          const evaluations = evals.filter((e) => e.assignment === a.id);
+          const currentRoster = schoolClassRoster(d, c.id);
+          const studentIds = new Set(currentRoster.map((p) => p.id));
+          for (const g of d.grades)
+            if (evaluations.some((e) => e.id === g.evaluation))
+              studentIds.add(g.student);
+          const roster = d.people
+            .filter((p) => p.role === "student" && studentIds.has(p.id))
+            .sort(
+              (a, b) =>
+                schoolCompare(a.last_name, b.last_name) ||
+                schoolCompare(a.first_name, b.first_name),
+            );
+          const gradebook = evaluations.length
+            ? table(
+                [
+                  "Élève",
+                  ...evaluations.map(
+                    (e) =>
+                      `${esc(e.title)}<br><small>${esc(e.held_on)} · ${e.published ? "Publiée" : "Brouillon"}</small>`,
+                  ),
+                ],
+                roster.map((p) => [
+                  esc(fullName(p)),
+                  ...evaluations.map((e) => {
+                    const grade = grades.get(e.id + ":" + p.id);
+                    const value = !grade
+                      ? "—"
+                      : grade.status === "absent"
+                        ? "Absent"
+                        : grade.status === "exempt"
+                          ? "Dispensé"
+                          : `${grade.score} / ${e.maximum}`;
+                    return `${esc(value)}${grade?.comment ? `<small class="grade-comment">${esc(grade.comment)}</small>` : ""}`;
+                  }),
+                ]),
+              )
+            : '<p class="empty">Aucune évaluation pour cette matière et cette période.</p>';
+          return `<section class="grade-subject" data-grade-subject="${esc(a.subject)}"><h3>${esc(d.subjects.find((s) => s.id === a.subject)?.name)}</h3><p>Enseignant : ${esc(person(d, a.teacher))} · Coefficient : ${a.coefficient}</p>${gradebook}${
+            teaching && evaluations.length
+              ? `<h4>Publication des évaluations</h4>${table(
+                  ["Évaluation", "Date", "État", "Action"],
+                  evaluations.map((e) => [
+                    esc(e.title),
+                    esc(e.held_on),
+                    e.published ? "Publiée" : "Brouillon",
+                    opButton(
+                      "publish-evaluation",
+                      { id: e.id, published: !e.published },
+                      e.published ? "Dépublier" : "Publier",
+                    ),
+                  ]),
+                )}`
+              : ""
+          }</section>`;
+        })
+        .join("");
+      return `<section class="panel grade-class" data-grade-class="${esc(c.id)}"><h2>${esc(schoolClassLabel(d, c))}</h2>${classGroups || "<p>Aucune matière affectée à cette classe.</p>"}</section>`;
+    })
+    .join("");
+  return (
+    filters +
+    `<div class="grid">${create}${entry}</div><div id="grade-groups">${groups || '<p class="empty">Aucune classe accessible.</p>'}</div><p class="empty">Les notes sont regroupées par classe et matière. Les familles voient uniquement les évaluations publiées. Les absences et dispenses sont exclues des moyennes des bulletins.</p>`
+  );
+}
+
 function schoolScreen(d) {
   const admin = d.me.role === "administrator",
     teaching = admin || d.me.role === "teacher",
@@ -102,6 +456,8 @@ function schoolScreen(d) {
     ]),
   );
   switch (schoolPage) {
+    case "classes":
+      return classesScreen(d);
     case "overview":
       return `<div class="metrics">${[
         ["Classes", d.classes.length],
@@ -212,7 +568,9 @@ function schoolScreen(d) {
                 select(
                   "subject",
                   "Matière",
-                  [...d.subjects].sort((a, b) => a.name.localeCompare(b.name, "fr")),
+                  [...d.subjects].sort((a, b) =>
+                    a.name.localeCompare(b.name, "fr"),
+                  ),
                   (x) => x.id,
                   (x) => x.name,
                 ) +
@@ -271,98 +629,8 @@ function schoolScreen(d) {
           ]),
         ),
       )}</div>${panel("Affectations", assignTable)}`;
-    case "grades": {
-      const evals = d.evaluations;
-      if (!evals.some((x) => x.id === schoolEval))
-        schoolEval = evals[0]?.id || "";
-      const ev = evals.find((x) => x.id === schoolEval),
-        as = d.assignments.find((x) => x.id === ev?.assignment),
-        roster = students.filter((s) =>
-          d.enrollments.some(
-            (e) => e.student_id === s.id && e.class_id === as?.classroom,
-          ),
-        );
-      return `<div class="grid">${teaching ? panel("Créer une évaluation", d.assignments.length && d.periods.length ? opForm("evaluation", asSelect() + periodSelect() + field("title", "Titre") + dateField("held_on", "Date") + field("maximum", "Barème", "number", 'min="1" max="1000" value="20"') + field("weight", "Coefficient de l’évaluation", "number", 'min="0.1" max="20" step="0.1" value="1"')) : "<p>Les affectations et les périodes doivent être créées par l’administration.</p>") : ""}${
-        teaching && ev
-          ? panel(
-              "Saisir ou corriger une note",
-              `<label>Évaluation<select id="school-evaluation">${options(
-                evals,
-                (x) => x.id,
-                (x) => x.title + " · " + titleOf(d, x.assignment),
-                schoolEval,
-              )}</select></label>` +
-                opForm(
-                  "grade",
-                  hidden("evaluation", schoolEval) +
-                    select("student", "Élève", roster, (x) => x.id, fullName) +
-                    select(
-                      "status",
-                      "Statut",
-                      [
-                        { id: "graded", name: "Noté" },
-                        { id: "absent", name: "Absent (exclu de la moyenne)" },
-                        { id: "exempt", name: "Dispensé" },
-                      ],
-                      (x) => x.id,
-                      (x) => x.name,
-                    ) +
-                    field(
-                      "score",
-                      "Note",
-                      "number",
-                      `min="0" max="${ev.maximum}" step="0.01" value="0"`,
-                    ) +
-                    `<label>Appréciation<input name="comment" maxlength="1000"></label>`,
-                ),
-            )
-          : ""
-      }</div>${panel(
-        "Évaluations",
-        table(
-          [
-            "Évaluation",
-            "Classe / matière",
-            "Période",
-            "État",
-            ...(teaching ? ["Action"] : []),
-          ],
-          evals.map((x) => [
-            esc(x.title),
-            esc(titleOf(d, x.assignment)),
-            esc(d.periods.find((p) => p.id === x.period)?.label),
-            x.published ? "Publiée" : "Brouillon",
-            ...(teaching
-              ? [
-                  opButton(
-                    "publish-evaluation",
-                    { id: x.id, published: !x.published },
-                    x.published ? "Dépublier" : "Publier",
-                  ),
-                ]
-              : []),
-          ]),
-        ),
-      )}${panel(
-        "Notes",
-        table(
-          ["Élève", "Évaluation", "Note", "Appréciation"],
-          d.grades.map((g) => {
-            const e = evals.find((x) => x.id === g.evaluation);
-            return [
-              esc(person(d, g.student)),
-              esc(e?.title),
-              g.status === "graded"
-                ? `${g.score} / ${e?.maximum}`
-                : g.status === "absent"
-                  ? "Absent"
-                  : "Dispensé",
-              esc(g.comment),
-            ];
-          }),
-        ),
-      )}<p class="empty">Les familles voient uniquement les évaluations publiées. Les absences et dispenses n’entrent pas dans les moyennes.</p>`;
-    }
+    case "grades":
+      return gradesScreen(d);
     case "homework":
       return `${teaching ? panel("Donner un devoir", d.assignments.length ? opForm("homework", asSelect() + field("title", "Titre") + area("instructions", "Consignes") + dateField("due_on", "À rendre le")) : "<p>Aucune affectation.</p>") : ""}${
         d.homework
@@ -684,7 +952,9 @@ function schoolScreen(d) {
                 select(
                   "id",
                   "Matière",
-                  [...d.subjects].sort((a, b) => a.name.localeCompare(b.name, "fr")),
+                  [...d.subjects].sort((a, b) =>
+                    a.name.localeCompare(b.name, "fr"),
+                  ),
                   (x) => x.id,
                   (x) => x.name,
                 ) + field("name", "Nouveau nom"),
@@ -826,6 +1096,25 @@ function reportScreen(d) {
   )}<h3>Moyenne générale : ${general} /20</h3><p class="prewrap">${esc(comment)}</p><p class="empty">Moyennes pondérées des seules évaluations publiées. Les absences et dispenses sont exclues. Ce bulletin est un document interne de l’établissement.</p></section>`;
 }
 document.addEventListener("click", async (event) => {
+  const openClass = event.target.closest("[data-open-class]");
+  if (openClass) {
+    selectedClass = openClass.dataset.openClass;
+    document.querySelector("#school-content").innerHTML =
+      schoolScreen(schoolData);
+    document
+      .querySelector("#class-detail")
+      ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    return;
+  }
+  const notes = event.target.closest("[data-class-notes]");
+  if (notes) {
+    gradesClass = notes.dataset.classNotes;
+    gradesSubject = "";
+    gradesPeriod = null;
+    schoolPage = "grades";
+    await schoolWorkspace();
+    return;
+  }
   const page = event.target.closest("[data-school-page]");
   if (page) {
     schoolPage = page.dataset.schoolPage;
@@ -887,6 +1176,49 @@ document.addEventListener("click", async (event) => {
   }
 });
 document.addEventListener("change", async (event) => {
+  if (
+    event.target.name === "assignment" &&
+    event.target.closest('form[data-operation="evaluation"]')
+  ) {
+    const form = event.target.closest("form");
+    const assignment = schoolData.assignments.find(
+      (a) => a.id === event.target.value,
+    );
+    const year = schoolData.classes.find(
+      (c) => c.id === assignment?.classroom,
+    )?.academic_year_id;
+    const period = form.querySelector('[name="period"]');
+    period.innerHTML = options(
+      schoolData.periods.filter((p) => p.year === year),
+      (p) => p.id,
+      (p) =>
+        p.label + " · " + schoolData.years.find((y) => y.id === p.year)?.label,
+      period.value,
+    );
+    return;
+  }
+  const filters = {
+    "grades-class": "class",
+    "grades-subject": "subject",
+    "grades-period": "period",
+    "classes-year": "year",
+  };
+  if (event.target.id in filters) {
+    if (filters[event.target.id] === "class") {
+      gradesClass = event.target.value;
+      gradesSubject = "";
+      gradesPeriod = null;
+    }
+    if (filters[event.target.id] === "subject")
+      gradesSubject = event.target.value;
+    if (filters[event.target.id] === "period")
+      gradesPeriod = event.target.value;
+    if (filters[event.target.id] === "year") classesYear = event.target.value;
+    schoolEval = "";
+    document.querySelector("#school-content").innerHTML =
+      schoolScreen(schoolData);
+    return;
+  }
   if (event.target.id === "school-evaluation") schoolEval = event.target.value;
   else if (event.target.id === "report-student")
     reportStudent = event.target.value;

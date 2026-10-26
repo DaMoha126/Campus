@@ -70,7 +70,9 @@ test(
             admin,
           ),
         ),
-        subject = ok(await f.state(admin)).subjects.find((x) => x.name === "Mathématiques");
+        subject = ok(await f.state(admin)).subjects.find(
+          (x) => x.name === "Mathématiques",
+        );
       assert.ok(subject);
       ok(
         await f.record(
@@ -124,6 +126,20 @@ test(
       await page
         .getByRole("heading", { name: "Inscriptions & paiements", exact: true })
         .waitFor();
+      await page.getByRole("button", { name: "Classes", exact: true }).click();
+      await page
+        .getByRole("heading", { name: "Classes", exact: true })
+        .waitFor();
+      await page
+        .getByRole("button", { name: "Inscriptions & paiements", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Notes", exact: true }).click();
+      await page
+        .getByRole("heading", { name: "Notes & évaluations", exact: true })
+        .waitFor();
+      await page
+        .getByRole("button", { name: "Inscriptions & paiements", exact: true })
+        .click();
       await page.getByRole("button", { name: "Ouvrir", exact: true }).click();
       let form = page.locator("form[data-action=payments]");
       await form.locator("[name=amount]").fill("30000");
@@ -152,10 +168,35 @@ test(
           exact: true,
         })
         .click();
-      await page.getByRole("button", { name: "Organisation pédagogique", exact: true }).click();
+      await page.getByRole("button", { name: "Classes", exact: true }).click();
+      await page
+        .getByRole("heading", { name: "Classes", exact: true })
+        .waitFor();
+      assert.match(await page.locator("#class-detail").innerText(), /3e A/);
+      assert.match(
+        await page.locator("#class-detail").innerText(),
+        /Élèves inscrits \(1\)/,
+      );
+      await page
+        .getByRole("button", {
+          name: "Consulter les notes de cette classe",
+          exact: true,
+        })
+        .click();
+      await page.locator("#grades-class").waitFor();
+      assert.equal(
+        await page.locator("#grades-class").getAttribute("id"),
+        "grades-class",
+      );
+      await page
+        .getByRole("button", { name: "Organisation pédagogique", exact: true })
+        .click();
       form = page.locator("form[data-operation=assignment]");
       await form.waitFor();
-      assert.equal(await form.locator("select[name=subject] option").count(), 15);
+      assert.equal(
+        await form.locator("select[name=subject] option").count(),
+        15,
+      );
       await form.locator("[name=teacher]").selectOption(users.teacher.id);
       await form.locator("[name=classroom]").selectOption(cl.id);
       await form.locator("[name=subject]").selectOption(subject.id);
@@ -163,7 +204,9 @@ test(
       await form.locator("[type=submit]").click();
       await page.getByText("Opération enregistrée", { exact: true }).waitFor();
       assert.equal(ok(await f.state(admin)).assignments.length, 1);
-      await page.getByRole("button", { name: "Emploi du temps", exact: true }).click();
+      await page
+        .getByRole("button", { name: "Emploi du temps", exact: true })
+        .click();
       form = page.locator("form[data-operation=timetable]");
       await form.locator("[name=weekday]").selectOption("1");
       await form.locator("[name=start_time]").fill("08:00");
@@ -175,7 +218,9 @@ test(
       await form.locator("[name=start_time]").fill("08:30");
       await form.locator("[name=end_time]").fill("09:30");
       await form.locator("[type=submit]").click();
-      await page.getByText("Conflit de classe, enseignant ou salle.", { exact: true }).waitFor();
+      await page
+        .getByText("Conflit de classe, enseignant ou salle.", { exact: true })
+        .waitFor();
       assert.equal(ok(await f.state(admin)).timetable.length, 1);
       await page
         .getByRole("button", { name: "Notes & évaluations", exact: true })
@@ -207,6 +252,231 @@ test(
         await page.locator("#payment-receipt").textContent(),
         /18.00/,
       );
+      const french = ok(await f.state(admin)).subjects.find(
+        (x) => x.name === "Français",
+      );
+      const classB = ok(
+        await f.record(
+          "classes",
+          {
+            establishment_id: school.id,
+            academic_year_id: year.id,
+            name: "3e B",
+            capacity: 20,
+          },
+          admin,
+        ),
+      );
+      const frenchAssignment = ok(
+        await f.action(admin, "assignment", {
+          teacher: users.teacher.id,
+          classroom: cl.id,
+          subject: french.id,
+          coefficient: 1,
+        }),
+      );
+      const otherAssignment = ok(
+        await f.action(admin, "assignment", {
+          teacher: users.teacher.id,
+          classroom: classB.id,
+          subject: subject.id,
+          coefficient: 2,
+        }),
+      );
+      const term = ok(await f.state(admin)).periods[0];
+      const frenchEvaluation = ok(
+        await f.action(admin, "evaluation", {
+          assignment: frenchAssignment.id,
+          period: term.id,
+          title: "Dictée de français",
+          held_on: "2026-10-19",
+          maximum: 20,
+          weight: 1,
+        }),
+      );
+      ok(
+        await f.action(admin, "grade", {
+          evaluation: frenchEvaluation.id,
+          student: users.student.id,
+          status: "graded",
+          score: 12,
+          comment: "Exemple français",
+        }),
+      );
+      ok(
+        await f.action(admin, "evaluation", {
+          assignment: otherAssignment.id,
+          period: term.id,
+          title: "Contrôle classe B",
+          held_on: "2026-10-19",
+          maximum: 20,
+          weight: 1,
+        }),
+      );
+      await page
+        .getByRole("button", { name: "Notes & évaluations", exact: true })
+        .click();
+      await page.locator("#grades-class").selectOption(cl.id);
+      await page.locator("#grades-subject").selectOption(subject.id);
+      await page
+        .locator("#grade-groups")
+        .getByText("18 / 20", { exact: true })
+        .waitFor();
+      assert.ok(
+        !(await page.locator("#grade-groups").innerText()).includes(
+          "Dictée de français",
+        ),
+      );
+      assert.ok(
+        !(await page.locator("#grade-groups").innerText()).includes(
+          "Contrôle classe B",
+        ),
+      );
+      await page.locator("#grades-subject").selectOption(french.id);
+      await page
+        .locator("#grade-groups")
+        .getByText("Dictée de français", { exact: true })
+        .waitFor();
+      assert.match(await page.locator("#grade-groups").innerText(), /12 \/ 20/);
+      assert.ok(
+        !(await page.locator("#grade-groups").innerText()).includes(
+          "Contrôle navigateur",
+        ),
+      );
+      await page.locator("#grades-class").selectOption(classB.id);
+      await page
+        .locator("#grade-groups")
+        .getByText("Contrôle classe B", { exact: true })
+        .waitFor();
+      assert.ok(
+        !(await page.locator("#grade-groups").innerText()).includes(
+          "Dictée de français",
+        ),
+      );
+      await page.locator("#grades-class").selectOption("");
+      assert.equal(await page.locator("[data-grade-class]").count(), 2);
+      await page.screenshot({
+        path: "/tmp/etudia-notes-classe-matiere.png",
+        fullPage: true,
+      });
+      const oldYear = ok(
+        await f.record(
+          "academic_years",
+          {
+            establishment_id: school.id,
+            label: "2025–2026",
+            starts_on: "2025-09-01 00:00:00Z",
+            ends_on: "2026-07-31 00:00:00Z",
+          },
+          admin,
+        ),
+      );
+      const oldClass = ok(
+        await f.record(
+          "classes",
+          {
+            establishment_id: school.id,
+            academic_year_id: oldYear.id,
+            name: "3e A",
+            capacity: 20,
+          },
+          admin,
+        ),
+      );
+      const oldPeriod = ok(
+        await f.action(admin, "period", {
+          year: oldYear.id,
+          label: "Trimestre 1",
+          starts_on: "2025-09-01",
+          ends_on: "2025-12-31",
+        }),
+      );
+      const oldAssignment = ok(
+        await f.action(admin, "assignment", {
+          teacher: users.teacher.id,
+          classroom: oldClass.id,
+          subject: subject.id,
+          coefficient: 2,
+        }),
+      );
+      ok(
+        await f.action(admin, "evaluation", {
+          assignment: oldAssignment.id,
+          period: oldPeriod.id,
+          title: "Contrôle année précédente",
+          held_on: "2025-10-14",
+          maximum: 20,
+          weight: 1,
+        }),
+      );
+      await page
+        .getByRole("button", { name: "Notes & évaluations", exact: true })
+        .click();
+      await page.locator("#grades-class").selectOption(oldClass.id);
+      await page
+        .locator("#grade-groups")
+        .getByText("Contrôle année précédente", { exact: true })
+        .waitFor();
+      assert.ok(
+        !(await page.locator("#grade-groups").innerText()).includes(
+          "Contrôle navigateur",
+        ),
+      );
+      await page.locator("#grades-class").selectOption("");
+      const oldForm = page.locator('form[data-operation="evaluation"]');
+      await oldForm
+        .locator('[name="assignment"]')
+        .selectOption(oldAssignment.id);
+      assert.equal(await oldForm.locator('[name="period"] option').count(), 1);
+      assert.equal(
+        await oldForm.locator('[name="period"] option').getAttribute("value"),
+        oldPeriod.id,
+      );
+
+      await page.getByRole("button", { name: "Classes", exact: true }).click();
+      await page
+        .getByRole("button", { name: "Ouvrir 3e B", exact: true })
+        .click();
+      await page
+        .locator("#class-detail")
+        .getByRole("heading", { name: "Élèves inscrits (0)", exact: true })
+        .waitFor();
+      await page
+        .getByRole("button", {
+          name: "Consulter les notes de cette classe",
+          exact: true,
+        })
+        .click();
+      assert.ok(
+        (await page.locator("#grade-groups").innerText()).includes(
+          "Contrôle classe B",
+        ),
+      );
+      await page.locator("#grades-class").selectOption(cl.id);
+      await page.getByRole("button", { name: "Classes", exact: true }).click();
+      const classForm = page.locator('form[data-action="classes"]');
+      await classForm.locator('[name="name"]').fill("3e C");
+      await classForm.locator('[name="capacity"]').fill("25");
+      await classForm.locator('[type="submit"]').click();
+      await page
+        .getByRole("button", { name: "Ouvrir 3e C", exact: true })
+        .click();
+      await page.locator("#class-detail summary").click();
+      const editClass = page.locator('form[data-operation="edit-class"]');
+      await editClass.locator('[name="name"]').fill("3e C2");
+      await editClass.locator('[name="capacity"]').fill("32");
+      await editClass.locator('[type="submit"]').click();
+      await page
+        .getByRole("button", { name: "Ouvrir 3e C2", exact: true })
+        .waitFor();
+      await page.screenshot({
+        path: "/tmp/etudia-classes.png",
+        fullPage: true,
+      });
+      const savedClass = ok(await f.state(admin)).classes.find(
+        (c) => c.name === "3e C2",
+      );
+      assert.equal(savedClass.capacity, 32);
       await page
         .getByRole("button", { name: "Organisation pédagogique", exact: true })
         .click();
@@ -235,6 +505,7 @@ test(
       assert.equal(await page.locator("#school-content img").count(), 0);
       for (const name of [
         "Tableau de bord",
+        "Classes",
         "Devoirs & rendus",
         "Cahier de textes",
         "Emploi du temps",
@@ -276,6 +547,21 @@ test(
       await family
         .getByRole("heading", { name: "Tableau de bord", exact: true })
         .waitFor();
+      assert.equal(
+        await family
+          .getByRole("button", { name: "Classes", exact: true })
+          .count(),
+        0,
+      );
+      await family
+        .getByRole("button", { name: "Notes & évaluations", exact: true })
+        .click();
+      await family.locator("#grade-groups").waitFor();
+      assert.ok(
+        !(await family.locator("#grade-groups").innerText()).includes(
+          "Dictée de français",
+        ),
+      );
       await family
         .getByRole("button", { name: "Bulletins", exact: true })
         .click();
@@ -302,6 +588,24 @@ test(
       await teacherPage
         .getByRole("heading", { name: "Tableau de bord", exact: true })
         .waitFor();
+      await teacherPage
+        .getByRole("button", { name: "Classes", exact: true })
+        .click();
+      await teacherPage.locator("#class-detail").waitFor();
+      assert.equal(
+        await teacherPage.locator('form[data-action="classes"]').count(),
+        0,
+      );
+      assert.equal(
+        await teacherPage.locator('form[data-operation="edit-class"]').count(),
+        0,
+      );
+      assert.equal(
+        await teacherPage
+          .getByRole("button", { name: "Ouvrir 3e C2", exact: true })
+          .count(),
+        0,
+      );
       await teacherPage
         .getByRole("button", { name: "Devoirs & rendus", exact: true })
         .click();
