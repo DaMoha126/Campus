@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!pocketbase/
+!pocketbase/pb_hooks/
+!pocketbase/pb_hooks/**
+!pocketbase/pb_migrations/
+!pocketbase/pb_migrations/**
+!pocketbase/pb_public/
+!pocketbase/pb_public/**
+!scripts/
+!scripts/start-cloud.sh

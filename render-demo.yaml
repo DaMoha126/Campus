@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: etudia-demo
+    runtime: docker
+    region: frankfurt
+    plan: free
+    repo: https://github.com/DaMoha126/Campus
+    branch: codex/etudia-demo
+    autoDeployTrigger: "off"
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: ETUDIA_DEMO
+        value: "1"
+      - key: ETUDIA_DATA_DIR
+        value: /tmp/etudia-demo-data
+      - key: ETUDIA_DEMO_PASSWORD
+        generateValue: true

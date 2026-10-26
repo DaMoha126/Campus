@@ -1,41 +1,278 @@
-const app=document.querySelector('#app'),notice=document.querySelector('#notice'),logout=document.querySelector('#logout');
-const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const roles={administrator:'Administration',teacher:'Enseignant',parent:'Parent',student:'Élève'};
+const app = document.querySelector("#app"),
+  notice = document.querySelector("#notice"),
+  logout = document.querySelector("#logout");
+const esc = (v) =>
+  String(v ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const roles = {
+  administrator: "Administration",
+  teacher: "Enseignant",
+  parent: "Parent",
+  student: "Élève",
+};
 let timer;
-function notify(message){notice.textContent=message;clearTimeout(timer);timer=setTimeout(()=>notice.textContent='',6000);}
+function notify(message) {
+  notice.textContent = message;
+  clearTimeout(timer);
+  timer = setTimeout(() => (notice.textContent = ""), 6000);
+}
 // PocketBase tokens stay in memory: reload requires a new login.
-let authToken='', currentUser=null;
-async function pb(route,body,method){
- const response=await fetch('/api/'+route,{method:method||(body?'POST':'GET'),headers:{...(body?{'Content-Type':'application/json'}:{}),...(authToken?{Authorization:authToken}:{})},body:body?JSON.stringify(body):undefined});
- const data=await response.json();
- if(!response.ok){if(response.status===401){authToken='';currentUser=null;}const details=Object.values(data.data||{}).map(x=>x.message).filter(Boolean).join(' ');throw new Error(details||data.message||'Erreur PocketBase');}return data;
+let authToken = "",
+  currentUser = null;
+async function pb(route, body, method) {
+  const response = await fetch("/api/" + route, {
+    method: method || (body ? "POST" : "GET"),
+    headers: {
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(authToken ? { Authorization: authToken } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    if (response.status === 401) {
+      authToken = "";
+      currentUser = null;
+    }
+    const details = Object.values(data.data || {})
+      .map((x) => x.message)
+      .filter(Boolean)
+      .join(" ");
+    throw new Error(details || data.message || "Erreur PocketBase");
+  }
+  return data;
 }
-async function records(collection){let page=1,items=[],r;do{r=await pb('collections/'+collection+'/records?perPage=200&page='+page++);items.push(...r.items);}while(page<=r.totalPages);return items;}
-async function api(route,body){
- if(route==='status')return {initialized:true};
- if(route==='login'){const r=await pb('collections/school_users/auth-with-password',{identity:body.email,password:body.password});authToken=r.token;currentUser=r.record;return r.record;}
- if(route==='logout'){authToken='';currentUser=null;return {};}
- if(!currentUser)throw new Error('Connexion requise');
- if(route==='me')return currentUser;
- if(route==='overview'){
- const [school,years,classes,people,subjects,enrollments,payments]=await Promise.all([pb('collections/establishments/records/'+currentUser.establishment_id),records('academic_years'),records('classes'),records('school_users'),records('subjects'),records('enrollments'),records('payments')]);
- return {school,years,subjects,enrollments,payments,people:people.map(x=>({...x,status:'active'})),classes:classes.map(x=>({...x,year:years.find(y=>y.id===x.academic_year_id)?.label||''}))};}
- const common={establishment_id:currentUser.establishment_id};
- if(route==='years')return pb('collections/academic_years/records',{...common,label:body.label,starts_on:body.startsOn+' 00:00:00.000Z',ends_on:body.endsOn+' 00:00:00.000Z',is_active:!!body.active});
- if(route==='classes')return pb('collections/classes/records',{...common,name:body.name,academic_year_id:body.yearId,capacity:Number(body.capacity)});
- if(route==='subjects')return pb('collections/subjects/records',{...common,name:body.name});
- if(route==='enrollments')return pb('collections/enrollments/records',{...common,student_id:body.student_id,academic_year_id:body.academic_year_id,class_id:body.class_id,enrolled_on:body.enrolled_on,registration_fee:Number(body.registration_fee),tuition_fee:Number(body.tuition_fee)});
- if(route==='enrollment-update')return pb('collections/enrollments/records/'+encodeURIComponent(body.id),{class_id:body.class_id,registration_fee:Number(body.registration_fee),tuition_fee:Number(body.tuition_fee),enrolled_on:body.enrolled_on},'PATCH');
- if(route==='payments')return pb('collections/payments/records',{...common,enrollment_id:body.enrollment_id,recorded_by:currentUser.id,amount:Number(body.amount),paid_on:body.paid_on,method:body.method,reference:body.reference,request_key:body.request_key});
- if(route==='people')return pb('collections/school_users/records',{...common,first_name:body.firstName,last_name:body.lastName,role:body.role,email:body.email,emailVisibility:true,password:body.password,passwordConfirm:body.password});
- throw new Error('Action indisponible');
+async function records(collection) {
+  let page = 1,
+    items = [],
+    r;
+  do {
+    r = await pb(
+      "collections/" + collection + "/records?perPage=200&page=" + page++,
+    );
+    items.push(...r.items);
+  } while (page <= r.totalPages);
+  return items;
 }
-const field=(name,label,type='text',extra='')=>`<label>${label}<input name="${name}" type="${type}" required ${extra}></label>`;
-function auth(setup){logout.hidden=true;app.innerHTML=`<section class="auth"><span class="badge">${setup?'Première installation':'Espace sécurisé'}</span><h1>${setup?'Bienvenue sur Étudia':'Connexion'}</h1><p>${setup?'Créez votre établissement et son premier compte administrateur.':'Connectez-vous avec le compte fourni par votre établissement. Au premier lancement, suivez le guide INSTALLATION_WINDOWS.md pour créer votre établissement et son administrateur.'}</p><form data-action="${setup?'setup':'login'}">${setup?field('name','Nom de l’établissement')+field('country','Pays')+field('city','Ville'):''}${field('email','Adresse email','email','autocomplete="username"')}${field('password','Mot de passe','password',`autocomplete="${setup?'new-password':'current-password'}" minlength="8" maxlength="200"`)}${setup?'<small>Utilisez au moins 8 caractères pour votre mot de passe.</small>':''}<br><button type="submit">${setup?'Créer mon établissement':'Se connecter'}</button></form></section>`;}
-const list=(items,format)=>items.length?items.map(x=>`<div class="item">${format(x)}</div>`).join(''):'<p class="empty">Aucun élément enregistré.</p>';
-let adminPage='enrollments', latestData=null;
-async function dashboard(){const d=await api('overview');latestData=d;app.innerHTML=`<span class="badge">Administration · PocketBase local</span><h1>${esc(d.school.name)}</h1><p>${esc(d.school.city||'')} · ${esc(d.school.country)}</p><div class="metrics">${[['Élèves',d.people.filter(x=>x.role==='student').length],['Enseignants',d.people.filter(x=>x.role==='teacher').length],['Classes',d.classes.length],['Matières',d.subjects.length]].map(([label,n])=>`<div><strong>${n}</strong><span>${label}</span></div>`).join('')}</div><div class="grid"><section class="panel"><h2>Années scolaires</h2><div class="list">${list(d.years,x=>`<b>${esc(x.label)}</b><small>${esc(x.starts_on.slice(0,10))} → ${esc(x.ends_on.slice(0,10))} ${x.is_active?'· Active':''}</small>`)}</div><form data-action="years">${field('label','Libellé : 2026–2027')}${field('startsOn','Début','date')}${field('endsOn','Fin','date')}<label><input type="checkbox" name="active"> Année active (une seule à la fois ; changement dans PocketBase)</label><button type="submit">Ajouter l’année</button></form></section><section class="panel"><h2>Classes</h2><div class="list">${list(d.classes,x=>`<b>${esc(x.name)}</b><small>${esc(x.year)} · Capacité : ${x.capacity}</small>`)}</div>${d.years.length?`<form data-action="classes">${field('name','Nom de la classe')}<label>Année scolaire<select name="yearId">${d.years.map(x=>`<option value="${x.id}">${esc(x.label)}</option>`).join('')}</select></label>${field('capacity','Capacité','number','min="1" max="1000"')}<button type="submit">Créer la classe</button></form>`:'<p class="empty">Ajoutez une année scolaire pour créer une classe.</p>'}</section><section class="panel"><h2>Comptes personnels</h2><p>Chaque personne dispose de ses propres identifiants. Transmettez le mot de passe initial par un canal privé.</p><form data-action="people">${field('firstName','Prénom')}${field('lastName','Nom')}<label>Rôle<select name="role">${Object.entries(roles).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select></label>${field('email','Adresse email','email')}${field('password','Mot de passe initial','password','minlength="8" maxlength="200" autocomplete="new-password"')}<button type="submit">Créer le compte</button></form></section><section class="panel"><h2>Matières</h2><div class="list">${list(d.subjects,x=>esc(x.name))}</div><form data-action="subjects">${field('name','Nom de la matière')}<button type="submit">Ajouter la matière</button></form></section><section class="panel wide"><h2>Annuaire de l’établissement</h2><div class="table-wrap"><table><thead><tr><th>Nom</th><th>Rôle</th><th>Email</th><th>État</th></tr></thead><tbody>${d.people.map(x=>`<tr><td>${esc(x.first_name)} ${esc(x.last_name)}</td><td>${roles[x.role]}</td><td>${esc(x.email)}</td><td>${esc(x.status==='active'?'Actif':x.status)}</td></tr>`).join('')}</tbody></table>${!d.people.length?'<p class="empty">Créez le premier compte pour alimenter l’annuaire.</p>':''}</div></section></div>`; const structure=app.innerHTML;app.innerHTML=`<nav class="admin-tabs" aria-label="Administration"><button data-page="enrollments" aria-current="${adminPage==='enrollments'?'page':'false'}">Inscriptions & paiements</button><button data-page="structure" aria-current="${adminPage==='structure'?'page':'false'}">Classes & comptes</button></nav>`+(adminPage==='structure'?structure:financeScreen(d));}
-async function start(){try{const s=await api('status');if(!s.initialized)return auth(true);let me;try{me=await api('me');}catch{return auth(false);}logout.hidden=false;if(me.role==='administrator')return await dashboard();app.innerHTML=`<section class="auth"><span class="badge">${roles[me.role]}</span><h1>Votre compte est actif</h1><p>${esc(me.email)}</p><p>Votre espace pédagogique est en cours de construction. Les notes, devoirs et absences seront disponibles dans une prochaine étape.</p></section>`;}catch(e){app.textContent='Impossible de charger Étudia. Vérifiez le serveur et réessayez.';notify(e.message);}}
-app.addEventListener('submit',async event=>{event.preventDefault();const form=event.target,button=form.querySelector('button[type=submit]'),data=Object.fromEntries(new FormData(form)),action=form.dataset.action;button.disabled=true;try{if(action==='years')data.active=form.elements.active.checked;if(action==='payments'&&!window.confirm('Confirmer le versement de '+money(Number(data.amount))+' ? Ce versement sera conservé dans l’historique.'))return;await api(action,data);if(action==='setup'){auth(false);notify('Établissement créé. Vous pouvez vous connecter.');}else{await start();notify(action==='login'?'Connexion réussie':action==='payments'?'Versement enregistré. Aucun débit bancaire n’a été effectué.':'Enregistrement sauvegardé');}}catch(e){notify(e.message);}finally{button.disabled=false;}});
-logout.addEventListener('click',async()=>{try{await api('logout',{});await start();}catch(e){notify(e.message);}});
+async function api(route, body) {
+  if (route === "status") return { initialized: true };
+  if (route === "login") {
+    const r = await pb("collections/school_users/auth-with-password", {
+      identity: body.email,
+      password: body.password,
+    });
+    authToken = r.token;
+    currentUser = r.record;
+    return r.record;
+  }
+  if (route === "logout") {
+    authToken = "";
+    currentUser = null;
+    return {};
+  }
+  if (!currentUser) throw new Error("Connexion requise");
+  if (route === "me") return currentUser;
+  if (route === "overview") {
+    const [school, years, classes, people, subjects, enrollments, payments] =
+      await Promise.all([
+        pb(
+          "collections/establishments/records/" + currentUser.establishment_id,
+        ),
+        records("academic_years"),
+        records("classes"),
+        records("school_users"),
+        records("subjects"),
+        records("enrollments"),
+        records("payments"),
+      ]);
+    const ops = await pb("etudia/state");
+    return {
+      school,
+      years,
+      subjects,
+      enrollments,
+      payments,
+      reversals: ops.reversals,
+      deadlines: ops.deadlines,
+      people: people.map((x) => ({ ...x, status: "active" })),
+      classes: classes.map((x) => ({
+        ...x,
+        year: years.find((y) => y.id === x.academic_year_id)?.label || "",
+      })),
+    };
+  }
+  const common = { establishment_id: currentUser.establishment_id };
+  if (route === "years")
+    return pb("collections/academic_years/records", {
+      ...common,
+      label: body.label,
+      starts_on: body.startsOn + " 00:00:00.000Z",
+      ends_on: body.endsOn + " 00:00:00.000Z",
+      is_active: !!body.active,
+    });
+  if (route === "classes")
+    return pb("collections/classes/records", {
+      ...common,
+      name: body.name,
+      academic_year_id: body.yearId,
+      capacity: Number(body.capacity),
+    });
+  if (route === "subjects")
+    return pb("collections/subjects/records", { ...common, name: body.name });
+  if (route === "enrollments")
+    return pb("collections/enrollments/records", {
+      ...common,
+      student_id: body.student_id,
+      academic_year_id: body.academic_year_id,
+      class_id: body.class_id,
+      enrolled_on: body.enrolled_on,
+      registration_fee: Number(body.registration_fee),
+      tuition_fee: Number(body.tuition_fee),
+    });
+  if (route === "enrollment-update")
+    return pb(
+      "collections/enrollments/records/" + encodeURIComponent(body.id),
+      {
+        class_id: body.class_id,
+        registration_fee: Number(body.registration_fee),
+        tuition_fee: Number(body.tuition_fee),
+        enrolled_on: body.enrolled_on,
+      },
+      "PATCH",
+    );
+  if (route === "payments")
+    return pb("collections/payments/records", {
+      ...common,
+      enrollment_id: body.enrollment_id,
+      recorded_by: currentUser.id,
+      amount: Number(body.amount),
+      paid_on: body.paid_on,
+      method: body.method,
+      reference: body.reference,
+      request_key: body.request_key,
+    });
+  if (route === "people")
+    return pb("collections/school_users/records", {
+      ...common,
+      first_name: body.firstName,
+      last_name: body.lastName,
+      role: body.role,
+      email: body.email,
+      emailVisibility: true,
+      phone: body.phone || "",
+      password: body.password,
+      passwordConfirm: body.password,
+    });
+  throw new Error("Action indisponible");
+}
+const field = (name, label, type = "text", extra = "") =>
+  `<label>${label}<input name="${name}" type="${type}" required ${extra}></label>`;
+function auth(setup) {
+  logout.hidden = true;
+  app.innerHTML = `<section class="auth"><span class="badge">${setup ? "Première installation" : "Espace sécurisé"}</span><h1>${setup ? "Bienvenue sur Étudia" : "Connexion"}</h1><p>${setup ? "Créez votre établissement et son premier compte administrateur." : "Connectez-vous avec le compte fourni par votre établissement. Au premier lancement, suivez le guide INSTALLATION_WINDOWS.md pour créer votre établissement et son administrateur."}</p><form data-action="${setup ? "setup" : "login"}">${setup ? field("name", "Nom de l’établissement") + field("country", "Pays") + field("city", "Ville") : ""}${field("email", "Email ou matricule", "text", 'autocomplete="username"')}${field("password", "Mot de passe", "password", `autocomplete="${setup ? "new-password" : "current-password"}" minlength="8" maxlength="200"`)}${setup ? "<small>Utilisez au moins 8 caractères pour votre mot de passe.</small>" : ""}<br><button type="submit">${setup ? "Créer mon établissement" : "Se connecter"}</button></form></section>`;
+}
+const list = (items, format) =>
+  items.length
+    ? items.map((x) => `<div class="item">${format(x)}</div>`).join("")
+    : '<p class="empty">Aucun élément enregistré.</p>';
+let adminPage = "enrollments",
+  latestData = null;
+async function dashboard() {
+  const d = await api("overview");
+  latestData = d;
+  app.innerHTML = `<span class="badge">Administration · PocketBase local</span><h1>${esc(d.school.name)}</h1><p>${esc(d.school.city || "")} · ${esc(d.school.country)}</p><div class="metrics">${[
+    ["Élèves", d.people.filter((x) => x.role === "student").length],
+    ["Enseignants", d.people.filter((x) => x.role === "teacher").length],
+    ["Classes", d.classes.length],
+    ["Matières", d.subjects.length],
+  ]
+    .map(
+      ([label, n]) => `<div><strong>${n}</strong><span>${label}</span></div>`,
+    )
+    .join(
+      "",
+    )}</div><div class="grid"><section class="panel"><h2>Années scolaires</h2><div class="list">${list(d.years, (x) => `<b>${esc(x.label)}</b><small>${esc(x.starts_on.slice(0, 10))} → ${esc(x.ends_on.slice(0, 10))} ${x.is_active ? "· Active" : ""}</small>`)}</div><form data-action="years">${field("label", "Libellé : 2026–2027")}${field("startsOn", "Début", "date")}${field("endsOn", "Fin", "date")}<label><input type="checkbox" name="active"> Année active (une seule à la fois ; changement dans PocketBase)</label><button type="submit">Ajouter l’année</button></form></section><section class="panel"><h2>Classes</h2><div class="list">${list(d.classes, (x) => `<b>${esc(x.name)}</b><small>${esc(x.year)} · Capacité : ${x.capacity}</small>`)}</div>${d.years.length ? `<form data-action="classes">${field("name", "Nom de la classe")}<label>Année scolaire<select name="yearId">${d.years.map((x) => `<option value="${x.id}">${esc(x.label)}</option>`).join("")}</select></label>${field("capacity", "Capacité", "number", 'min="1" max="1000"')}<button type="submit">Créer la classe</button></form>` : '<p class="empty">Ajoutez une année scolaire pour créer une classe.</p>'}</section><section class="panel"><h2>Comptes personnels</h2><p>Chaque personne dispose de ses propres identifiants. Transmettez le mot de passe initial par un canal privé.</p><form data-action="people">${field("firstName", "Prénom")}${field("lastName", "Nom")}<label>Rôle<select name="role">${Object.entries(
+    roles,
+  )
+    .map(([key, label]) => `<option value="${key}">${label}</option>`)
+    .join(
+      "",
+    )}</select></label><label>Adresse email (facultative)<input name="email" type="email" maxlength="200"></label><label>Téléphone (facultatif)<input name="phone" type="tel" maxlength="40"></label>${field("password", "Mot de passe initial", "password", 'minlength="8" maxlength="200" autocomplete="new-password"')}<button type="submit">Créer le compte</button></form></section><section class="panel"><h2>Matières</h2><p>Les matières générales sont ajoutées par défaut. Vous pouvez ajouter vos matières spécifiques ici, puis choisir la matière lors de l’affectation d’un enseignant.</p><div class="list">${list(d.subjects, (x) => esc(x.name))}</div><form data-action="subjects">${field("name", "Nom de la matière")}<button type="submit">Ajouter la matière</button></form></section><section class="panel wide"><h2>Annuaire de l’établissement</h2><div class="table-wrap"><table><thead><tr><th>Nom</th><th>Rôle</th><th>Email / matricule</th><th>État</th></tr></thead><tbody>${d.people.map((x) => `<tr><td>${esc(x.first_name)} ${esc(x.last_name)}</td><td>${roles[x.role]}</td><td>${esc(x.email)}<br><b>${esc(x.login_id || "")}</b></td><td>${esc(x.status === "active" ? "Actif" : x.status)}</td></tr>`).join("")}</tbody></table>${!d.people.length ? '<p class="empty">Créez le premier compte pour alimenter l’annuaire.</p>' : ""}</div></section></div>`;
+  const structure = app.innerHTML;
+  app.innerHTML =
+    `<nav class="admin-tabs" aria-label="Administration"><button data-page="workspace">Pédagogie & communications</button><button data-page="enrollments" aria-current="${adminPage === "enrollments" ? "page" : "false"}">Inscriptions & paiements</button><button data-page="structure" aria-current="${adminPage === "structure" ? "page" : "false"}">Classes & comptes</button></nav>` +
+    (adminPage === "structure" ? structure : financeScreen(d));
+}
+async function start() {
+  try {
+    const s = await api("status");
+    if (!s.initialized) return auth(true);
+    let me;
+    try {
+      me = await api("me");
+    } catch {
+      return auth(false);
+    }
+    logout.hidden = false;
+    if (me.role !== "administrator" || adminPage === "workspace")
+      return await schoolWorkspace();
+    return await dashboard();
+  } catch (e) {
+    app.textContent =
+      "Impossible de charger Étudia. Vérifiez le serveur et réessayez.";
+    notify(e.message);
+  }
+}
+app.addEventListener("submit", async (event) => {
+  if (!event.target.dataset.action) return;
+  event.preventDefault();
+  const form = event.target,
+    button = form.querySelector("button[type=submit]"),
+    data = Object.fromEntries(new FormData(form)),
+    action = form.dataset.action;
+  button.disabled = true;
+  try {
+    if (action === "years") data.active = form.elements.active.checked;
+    if (
+      action === "payments" &&
+      !window.confirm(
+        "Confirmer le versement de " +
+          money(Number(data.amount)) +
+          " ? Ce versement sera conservé dans l’historique.",
+      )
+    )
+      return;
+    await api(action, data);
+    if (action === "setup") {
+      auth(false);
+      notify("Établissement créé. Vous pouvez vous connecter.");
+    } else {
+      await start();
+      notify(
+        action === "login"
+          ? "Connexion réussie"
+          : action === "payments"
+            ? "Versement enregistré. Aucun débit bancaire n’a été effectué."
+            : "Enregistrement sauvegardé",
+      );
+    }
+  } catch (e) {
+    notify(e.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+logout.addEventListener("click", async () => {
+  try {
+    await api("logout", {});
+    await start();
+  } catch (e) {
+    notify(e.message);
+  }
+});
 start();
