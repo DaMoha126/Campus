@@ -48,7 +48,10 @@ const deleteButton = (entity, id) =>
 async function schoolWorkspace() {
   schoolData = await pb("etudia/state");
   const d = schoolData,
-    admin = d.me.role === "administrator";
+    admin = d.me.role === "administrator",
+    schoolLife = d.permissions?.schoolLife,
+    finance =
+      d.permissions?.finance || ["parent", "student"].includes(d.me.role);
   if (
     (!admin && schoolPage === "setup") ||
     (["parent", "student"].includes(d.me.role) && schoolPage === "classes")
@@ -60,6 +63,9 @@ async function schoolWorkspace() {
     .filter(
       ([key]) =>
         (admin || key !== "setup") &&
+        (finance || key !== "finances") &&
+        (d.me.role !== "accountant" ||
+          ["finances", "messages", "settings"].includes(key)) &&
         (d.me.role !== "teacher" || key !== "finances") &&
         (!["parent", "student"].includes(d.me.role) || key !== "classes"),
     )
@@ -108,7 +114,8 @@ function schoolClassRoster(d, id) {
     );
 }
 function classesScreen(d) {
-  const admin = d.me.role === "administrator";
+  const admin = d.me.role === "administrator",
+    schoolLife = d.permissions?.schoolLife;
   if (
     classesYear === null ||
     (classesYear && !d.years.some((y) => y.id === classesYear))
@@ -129,6 +136,16 @@ function classesScreen(d) {
         d.subjects.find((s) => s.id === b.subject)?.name,
       ),
     );
+  const enrolledIds = new Set(
+      d.enrollments
+        .filter((e) => !classesYear || e.academic_year_id === classesYear)
+        .map((e) => e.student_id),
+    ),
+    availableStudents = d.people.filter(
+      (p) => p.role === "student" && !enrolledIds.has(p.id),
+    ),
+    studentsForLink = d.people.filter((p) => p.role === "student"),
+    parents = d.people.filter((p) => p.role === "parent");
   return (
     panel(
       "Année scolaire",
@@ -142,10 +159,10 @@ function classesScreen(d) {
     `<div class="class-cards">${classes.map((c) => panel(esc(c.name), `<p>${esc(d.years.find((y) => y.id === c.academic_year_id)?.label)}</p><p><strong>${schoolClassRoster(d, c.id).length}</strong> élèves inscrits · capacité ${c.capacity}</p><button data-open-class="${esc(c.id)}" aria-pressed="${selectedClass === c.id}">Ouvrir ${esc(c.name)}</button>`)).join("") || '<p class="empty">Aucune classe pour cette année.</p>'}</div>` +
     (classroom
       ? `<section class="panel" id="class-detail"><h2>${esc(schoolClassLabel(d, classroom))}</h2><button data-class-notes="${esc(classroom.id)}">Consulter les notes de cette classe</button><h3>Élèves inscrits (${roster.length})</h3>${table(
-          ["Élève", ...(admin ? ["Matricule"] : []), "Parents liés"],
+          ["Élève", ...(schoolLife ? ["Matricule"] : []), "Parents liés"],
           roster.map((p) => [
             esc(fullName(p)),
-            ...(admin ? [esc(p.login_id || "—")] : []),
+            ...(schoolLife ? [esc(p.login_id || "—")] : []),
             d.links
               .filter((l) => l.student === p.id)
               .map((l) => esc(person(d, l.parent)))
@@ -158,7 +175,7 @@ function classesScreen(d) {
             esc(person(d, a.teacher)),
             a.coefficient,
           ]),
-        )}${admin ? `<details><summary>Modifier cette classe</summary>${opForm("edit-class", hidden("id", classroom.id) + field("name", "Nom de la classe", "text", `value="${esc(classroom.name)}"`) + field("capacity", "Capacité", "number", `min="1" max="1000" value="${classroom.capacity}"`))}</details>` : ""}</section>`
+        )}${schoolLife ? `<details><summary>Modifier cette classe</summary>${opForm("edit-class", hidden("id", classroom.id) + field("name", "Nom de la classe", "text", `value="${esc(classroom.name)}"`) + field("capacity", "Capacité", "number", `min="1" max="1000" value="${classroom.capacity}"`))}</details>` : ""}</section>`
       : "") +
     (admin
       ? panel(
@@ -174,6 +191,58 @@ function classesScreen(d) {
               )}${field("capacity", "Capacité", "number", 'min="1" max="1000" value="30"')}<button type="submit">Créer la classe</button></form>`
             : "<p>Créez d’abord une année scolaire dans Classes & comptes.</p>",
         )
+      : "") +
+    (d.me.role === "school_life"
+      ? `<div class="grid">${panel(
+          "Créer un compte élève ou parent",
+          `<form data-operation="create-person">${field("first_name", "Prénom")}${field("last_name", "Nom")}<label>Profil<select name="role"><option value="student">Élève</option><option value="parent">Parent</option></select></label><label>Email (facultatif)<input name="email" type="email" maxlength="200"></label><label>Téléphone (facultatif)<input name="phone" maxlength="40"></label><button type="submit">Créer le compte et télécharger ses identifiants</button></form><p class="empty">Le mot de passe temporaire et le matricule sont téléchargés une seule fois. Remettez le fichier au titulaire par un canal privé.</p>`,
+        )}${panel(
+          "Affecter un élève à une classe",
+          classes.length && availableStudents.length
+            ? opForm(
+                "enrollment",
+                select(
+                  "student",
+                  "Élève sans inscription cette année",
+                  availableStudents,
+                  (x) => x.id,
+                  fullName,
+                ) +
+                  select(
+                    "classroom",
+                    "Classe",
+                    classes,
+                    (x) => x.id,
+                    (x) => x.name,
+                  ) +
+                  hidden("year", classesYear) +
+                  field(
+                    "enrolled_on",
+                    "Date d’inscription",
+                    "date",
+                    `value="${today()}"`,
+                  ),
+                "Inscrire dans la classe",
+              ) +
+                '<p class="empty">Les frais et le suivi des versements restent gérés par la comptabilité.</p>'
+            : '<p class="empty">Choisissez une année avec une classe et un élève disponible.</p>',
+        )}${panel(
+          "Relier un parent à son enfant",
+          parents.length && studentsForLink.length
+            ? opForm(
+                "parent-link",
+                select("parent", "Parent", parents, (x) => x.id, fullName) +
+                  select(
+                    "student",
+                    "Élève",
+                    studentsForLink,
+                    (x) => x.id,
+                    fullName,
+                  ),
+                "Enregistrer le lien familial",
+              )
+            : '<p class="empty">Créez un compte parent et un compte élève pour établir leur lien.</p>',
+        )}</div>`
       : "")
   );
 }
@@ -421,6 +490,7 @@ function gradesScreen(d) {
 
 function schoolScreen(d) {
   const admin = d.me.role === "administrator",
+    schoolLife = d.permissions?.schoolLife,
     teaching = admin || d.me.role === "teacher",
     students = d.people.filter((x) => x.role === "student"),
     asSelect = () =>
@@ -790,7 +860,7 @@ function schoolScreen(d) {
       )}${panel(
         "Demandes de justification",
         table(
-          ["Élève", "Motif", "État", ...(admin ? ["Décision"] : [])],
+          ["Élève", "Motif", "État", ...(schoolLife ? ["Décision"] : [])],
           d.absenceRequests.map((x) => [
             esc(
               person(
@@ -804,7 +874,7 @@ function schoolScreen(d) {
               accepted: "Acceptée",
               rejected: "Refusée",
             }[x.status],
-            ...(admin
+            ...(schoolLife
               ? [
                   opButton(
                     "absence-review",
@@ -824,7 +894,7 @@ function schoolScreen(d) {
       )}`;
     case "announcements":
       return `${
-        admin
+        schoolLife
           ? panel(
               "Publier une annonce",
               opForm(
@@ -961,7 +1031,7 @@ function schoolScreen(d) {
               ),
             )
           : ""
-      }${admin ? panel("Modifier une fiche personne", opForm("edit-person", select("user", "Personne", d.people, (x) => x.id, fullName) + field("first_name", "Prénom") + field("last_name", "Nom") + '<label>Téléphone<input name="phone" maxlength="40"></label>')) : ""}${panel("Mon mot de passe", opForm("change-password", field("current_password", "Mot de passe actuel", "password", 'autocomplete="current-password"') + field("password", "Nouveau mot de passe", "password", 'minlength="8" maxlength="200" autocomplete="new-password"')))}${admin ? panel("Réinitialiser un mot de passe scolaire", opForm("reset-password", select("user", "Compte", d.people, (x) => x.id, fullName) + field("password", "Nouveau mot de passe temporaire", "password", 'minlength="8" maxlength="200" autocomplete="new-password"')) + '<p class="empty">Transmettez ce mot de passe en privé. Les anciens jetons du compte sont invalidés par PocketBase.</p>') : ""}${
+      }${schoolLife ? panel("Modifier une fiche personne", opForm("edit-person", select("user", "Personne", d.people, (x) => x.id, fullName) + field("first_name", "Prénom") + field("last_name", "Nom") + '<label>Téléphone<input name="phone" maxlength="40"></label>')) : ""}${panel("Mon mot de passe", opForm("change-password", field("current_password", "Mot de passe actuel", "password", 'autocomplete="current-password"') + field("password", "Nouveau mot de passe", "password", 'minlength="8" maxlength="200" autocomplete="new-password"')))}${admin ? panel("Réinitialiser un mot de passe scolaire", opForm("reset-password", select("user", "Compte", d.people, (x) => x.id, fullName) + field("password", "Nouveau mot de passe temporaire", "password", 'minlength="8" maxlength="200" autocomplete="new-password"')) + '<p class="empty">Transmettez ce mot de passe en privé. Les anciens jetons du compte sont invalidés par PocketBase.</p>') : ""}${
         admin
           ? panel(
               "Activer l’année scolaire",
@@ -1085,7 +1155,7 @@ function reportScreen(d) {
       (x) => x.label + " · " + d.years.find((y) => y.id === x.year)?.label,
       reportPeriod,
     )}</select></label><button id="print-report">Imprimer le bulletin</button>`,
-  )}${d.me.role === "administrator" && en ? panel("Appréciation générale", opForm("report-comment", hidden("student", reportStudent) + hidden("period", reportPeriod) + area("comment", "Appréciation", 4000))) : ""}</div><section class="panel" id="school-report"><h2>${esc(d.school.name)} · Bulletin</h2><p>${esc(person(d, reportStudent))} · ${esc(d.classes.find((c) => c.id === en?.class_id)?.name || "Non inscrit")} · ${esc(period?.label || "Période non définie")}</p>${table(
+  )}${d.permissions?.schoolLife && en ? panel("Appréciation générale", opForm("report-comment", hidden("student", reportStudent) + hidden("period", reportPeriod) + area("comment", "Appréciation", 4000))) : ""}</div><section class="panel" id="school-report"><h2>${esc(d.school.name)} · Bulletin</h2><p>${esc(person(d, reportStudent))} · ${esc(d.classes.find((c) => c.id === en?.class_id)?.name || "Non inscrit")} · ${esc(period?.label || "Période non définie")}</p>${table(
     ["Matière", "Notes prises en compte", "Coefficient", "Moyenne /20"],
     [...groups].map(([subject, g]) => [
       esc(d.subjects.find((s) => s.id === subject)?.name),
@@ -1140,7 +1210,12 @@ document.addEventListener("click", async (event) => {
         operation: op,
         data: JSON.parse(quick.dataset.payload),
       });
-      if (adminPage === "workspace" || currentUser.role !== "administrator")
+      if (
+        adminPage === "workspace" ||
+        ["school_life", "teacher", "student", "parent"].includes(
+          currentUser.role,
+        )
+      )
         await schoolWorkspace();
       else await start();
       notify("Modification enregistrée");
@@ -1255,7 +1330,7 @@ document.addEventListener("submit", async (event) => {
     )
       return;
     const saved = await pb("etudia/action", { operation, data });
-    if (operation === "import-students") {
+    if (["import-students", "create-person"].includes(operation)) {
       const rows = [
         ["Prénom", "Nom", "Email", "Matricule", "Mot de passe initial"],
         ...saved.credentials.map((x) => [
@@ -1279,7 +1354,10 @@ document.addEventListener("submit", async (event) => {
         url = URL.createObjectURL(blob),
         a = document.createElement("a");
       a.href = url;
-      a.download = "etudia-identifiants-confidentiels.csv";
+      a.download =
+        operation === "create-person"
+          ? "etudia-identifiants-compte-confidentiels.csv"
+          : "etudia-identifiants-confidentiels.csv";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
@@ -1292,7 +1370,12 @@ document.addEventListener("submit", async (event) => {
       await start();
       notify("Mot de passe changé. Reconnectez-vous.");
     } else {
-      if (adminPage === "workspace" || currentUser.role !== "administrator")
+      if (
+        adminPage === "workspace" ||
+        ["school_life", "teacher", "student", "parent"].includes(
+          currentUser.role,
+        )
+      )
         await schoolWorkspace();
       else await start();
       notify("Opération enregistrée");

@@ -125,7 +125,7 @@ module.exports = {
       if (
         recorder.getString("establishment_id") !==
           r.getString("establishment_id") ||
-        recorder.getString("role") !== "administrator"
+        !["administrator", "accountant"].includes(recorder.getString("role"))
       )
         throw new BadRequestError("Agent d’encaissement invalide.");
       const amount = r.getFloat("amount");

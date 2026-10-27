@@ -49,6 +49,8 @@ test(
         );
         for (const [key, role, school] of [
           ["admin", "administrator", a.id],
+          ["registrar", "school_life", a.id],
+          ["accountant", "accountant", a.id],
           ["teacher", "teacher", a.id],
           ["teacher2", "teacher", a.id],
           ["student", "student", a.id],
@@ -120,6 +122,30 @@ test(
         const foreignCatalog = ok(await state(tokens.foreign)).subjects;
         assert.equal(foreignCatalog.length, 15);
         assert.ok(!foreignCatalog.some((x) => x.id === subject.id));
+        const registrarState = ok(await state(tokens.registrar));
+        const accountantState = ok(await state(tokens.accountant));
+        assert.equal(registrarState.permissions.schoolLife, true);
+        assert.equal(registrarState.permissions.finance, false);
+        assert.equal(accountantState.permissions.finance, true);
+        assert.equal(accountantState.permissions.academics, false);
+        assert.equal(
+          Object.hasOwn(registrarState.enrollments[0] || {}, "tuition_fee"),
+          false,
+        );
+        assert.equal(accountantState.grades.length, 0);
+        denied(
+          await action(tokens.accountant, "edit-class", {
+            id: "not-a-real-id",
+            name: "Intrusion",
+            capacity: 1,
+          }),
+        );
+        denied(
+          await action(tokens.registrar, "reverse-payment", {
+            payment: "not-a-real-id",
+            reason: "test",
+          }),
+        );
         ins = ok(
           await record(
             "enrollments",
@@ -149,6 +175,114 @@ test(
           ),
         );
       });
+      await t.test(
+        "scolarité and comptabilité stay within their assigned permissions",
+        async () => {
+          const created = ok(
+            await action(tokens.registrar, "create-person", {
+              first_name: "Aïcha",
+              last_name: "Nouveau",
+              role: "student",
+              email: "",
+              phone: "",
+            }),
+          );
+          assert.match(created.credentials[0].login_id, /^E/);
+          assert.equal(created.credentials[0].password.length, 12);
+          denied(
+            await action(tokens.registrar, "create-person", {
+              first_name: "Nouvel",
+              last_name: "Enseignant",
+              role: "teacher",
+            }),
+          );
+          const student = ok(
+            await req(
+              "collections/school_users/records?filter=" +
+                encodeURIComponent(
+                  "login_id='" + created.credentials[0].login_id + "'",
+                ),
+              undefined,
+              tokens.admin,
+            ),
+          ).items[0];
+          const enrolled = ok(
+            await action(tokens.registrar, "enrollment", {
+              student: student.id,
+              classroom: otherClass.id,
+              year: year.id,
+              enrolled_on: "2026-10-18",
+            }),
+          );
+          assert.ok(enrolled.id);
+          const registrarState = ok(await state(tokens.registrar));
+          const accountState = ok(await state(tokens.accountant));
+          assert.equal(
+            accountState.people.some((x) => "email" in x || "phone" in x),
+            false,
+          );
+          const registrarEnrollment = registrarState.enrollments.find(
+            (x) => x.id === enrolled.id,
+          );
+          assert.ok(registrarEnrollment);
+          assert.equal(
+            Object.hasOwn(registrarEnrollment, "tuition_fee"),
+            false,
+          );
+          assert.equal(
+            accountState.enrollments.find((x) => x.id === enrolled.id)
+              .tuition_fee,
+            0,
+          );
+          ok(
+            await action(tokens.accountant, "enrollment-fees", {
+              enrollment: enrolled.id,
+              registration_fee: 500,
+              tuition_fee: 1500,
+            }),
+          );
+          assert.equal(
+            ok(await state(tokens.accountant)).enrollments.find(
+              (x) => x.id === enrolled.id,
+            ).tuition_fee,
+            1500,
+          );
+          denied(
+            await action(tokens.registrar, "enrollment-fees", {
+              enrollment: enrolled.id,
+              registration_fee: 0,
+              tuition_fee: 0,
+            }),
+          );
+          denied(
+            await action(tokens.accountant, "enrollment", {
+              student: student.id,
+              classroom: otherClass.id,
+              year: year.id,
+              enrolled_on: "2026-10-18",
+            }),
+          );
+          denied(
+            await action(tokens.registrar, "import-students", {
+              classroom: otherClass.id,
+              csv: "first_name;last_name;email;phone\nTest;Montant;testmontant@fixture.invalid;",
+              enrolled_on: "2026-10-18",
+              registration_fee: 100,
+              tuition_fee: 0,
+            }),
+          );
+          assert.equal(
+            (
+              await req(
+                "collections/payments/records",
+                undefined,
+                tokens.accountant,
+              )
+            ).status,
+            200,
+          );
+        },
+      );
       await t.test(
         "teacher assignments and parent links enforce school and role",
         async () => {
@@ -482,8 +616,45 @@ test(
               tokens.admin,
             ),
           );
+          const cashierPay = ok(
+            await record(
+              "payments",
+              {
+                establishment_id: a.id,
+                enrollment_id: ins.id,
+                recorded_by: users.accountant.id,
+                amount: 1,
+                paid_on: "2026-10-18",
+                method: "cash",
+                request_key: "cashier-role-payment",
+              },
+              tokens.accountant,
+            ),
+          );
+          assert.equal(cashierPay.recorded_by, users.accountant.id);
+          denied(
+            await record(
+              "payments",
+              {
+                establishment_id: a.id,
+                enrollment_id: ins.id,
+                recorded_by: users.registrar.id,
+                amount: 1,
+                paid_on: "2026-10-18",
+                method: "cash",
+                request_key: "registrar-role-payment",
+              },
+              tokens.registrar,
+            ),
+          );
           ok(
-            await action(tokens.admin, "deadline", {
+            await action(tokens.accountant, "reverse-payment", {
+              payment: cashierPay.id,
+              reason: "Test du droit comptable",
+            }),
+          );
+          ok(
+            await action(tokens.accountant, "deadline", {
               enrollment: ins.id,
               label: "Tranche 1",
               due_on: "2026-10-20",
@@ -539,7 +710,7 @@ test(
               "PATCH",
             ),
           );
-          assert.equal(ok(await state(tokens.parent)).reversals.length, 1);
+          assert.equal(ok(await state(tokens.parent)).reversals.length, 2);
           assert.equal(ok(await state(tokens.foreign)).payments.length, 0);
           assert.equal(ok(await state(tokens.parent)).audit.length, 0);
           assert.ok(ok(await state(tokens.admin)).audit.length > 10);

@@ -4,6 +4,10 @@
 
 Après la création du superutilisateur technique, de l’établissement et du premier compte scolaire administrateur (voir le guide Windows), connectez-vous à l’application.
 
+## Rôles administratifs
+
+La **Direction** conserve tous les droits et peut créer les comptes des autres responsables depuis **Classes & comptes**. Le compte **Scolarité** gère les profils d’élèves et de parents, les liens familiaux, les affectations en classe, les classes, les absences et les appréciations ; ses inscriptions commencent avec des frais à zéro. Il ne peut ni consulter ni modifier les montants ou les versements. Le compte **Comptabilité** ouvre directement le registre financier, peut définir les frais, enregistrer les versements, échéances et corrections ; il ne peut pas changer les classes, les inscriptions ni les notes. Ces restrictions sont vérifiées par le serveur.
+
 1. Dans **Classes & comptes**, créez l’année, les classes, les matières et les comptes. Une adresse email est facultative ; chaque compte obtient un matricule de connexion. L’annuaire affiche ce matricule. Transmettez les identifiants en privé.
 2. Dans **Inscriptions & paiements**, inscrivez les élèves dans leur classe et définissez les frais. Une seule inscription par élève et année est autorisée. Un changement de classe reste possible dans le dossier ; les classes précédentes sont conservées pour l’historique.
 3. Dans **Pédagogie & communications → Organisation pédagogique**, affectez chaque enseignant à une classe et une matière. Définissez le coefficient de la matière. Une classe/matière a une seule affectation dans cette version.
@@ -13,7 +17,7 @@ Après la création du superutilisateur technique, de l’établissement et du p
 
 ## Importer des élèves
 
-Dans Organisation pédagogique, sélectionnez une classe, une date d’inscription et les frais communs. Collez un CSV séparé par des points-virgules avec cet en-tête exact :
+Dans Organisation pédagogique, la Direction peut sélectionner une classe, une date d’inscription et des frais communs. Collez un CSV séparé par des points-virgules avec cet en-tête exact :
 
 ```csv
 first_name;last_name;email;phone

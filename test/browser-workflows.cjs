@@ -27,7 +27,14 @@ test(
           ),
         ),
         users = {};
-      for (const role of ["administrator", "teacher", "student", "parent"])
+      for (const role of [
+        "administrator",
+        "school_life",
+        "accountant",
+        "teacher",
+        "student",
+        "parent",
+      ])
         users[role] = ok(
           await f.record(
             "school_users",
@@ -639,6 +646,108 @@ test(
       await task.locator("[name=answer]").fill("x=3");
       await task.locator("[type=submit]").click();
       await studentPage.getByText("x=3", { exact: true }).waitFor();
+      const registrarPage = await context.newPage();
+      registrarPage.on("pageerror", (e) => errors.push(e.message));
+      await registrarPage.goto(f.base);
+      await registrarPage
+        .getByLabel("Email ou matricule")
+        .fill("school_life@browser.invalid");
+      await registrarPage
+        .getByLabel("Mot de passe", { exact: true })
+        .fill(f.password);
+      await registrarPage
+        .getByRole("button", { name: "Se connecter", exact: true })
+        .click();
+      await registrarPage
+        .getByRole("heading", { name: "Tableau de bord", exact: true })
+        .waitFor();
+      await registrarPage
+        .getByRole("button", { name: "Classes", exact: true })
+        .click();
+      const personForm = registrarPage.locator(
+        'form[data-operation="create-person"]',
+      );
+      await personForm.locator('[name="first_name"]').fill("Rokia");
+      await personForm.locator('[name="last_name"]').fill("Nouveau");
+      const credentialsDownload = registrarPage.waitForEvent("download");
+      await personForm.getByRole("button", { name: /Créer le compte/ }).click();
+      const credentials = await credentialsDownload;
+      assert.match(
+        require("node:fs").readFileSync(await credentials.path(), "utf8"),
+        /Rokia/,
+      );
+      const enrollmentForm = registrarPage.locator(
+        'form[data-operation="enrollment"]',
+      );
+      await enrollmentForm.locator('[name="enrolled_on"]').fill("2026-10-20");
+      await enrollmentForm.locator('[name="classroom"]').selectOption(cl.id);
+      await registrarPage
+        .locator("#notice")
+        .evaluate((el) => (el.textContent = ""));
+      await enrollmentForm
+        .getByRole("button", { name: "Inscrire dans la classe" })
+        .click();
+      await registrarPage.waitForFunction(
+        () => document.querySelector("#notice")?.textContent,
+        null,
+        { timeout: 5000 },
+      );
+      assert.equal(
+        await registrarPage.locator("#notice").textContent(),
+        "Opération enregistrée",
+      );
+      const afterRegistrarEnrollment = ok(await f.state(admin));
+      const rokia = afterRegistrarEnrollment.people.find(
+        (x) => x.first_name === "Rokia" && x.last_name === "Nouveau",
+      );
+      assert.ok(rokia);
+      assert.ok(
+        afterRegistrarEnrollment.enrollments.some(
+          (x) => x.student_id === rokia.id,
+        ),
+      );
+      await registrarPage.locator(`[data-open-class="${cl.id}"]`).click();
+      await registrarPage
+        .locator("#class-detail")
+        .getByText("Rokia Nouveau", { exact: true })
+        .waitFor();
+
+      const accountantPage = await context.newPage();
+      accountantPage.on("pageerror", (e) => errors.push(e.message));
+      await accountantPage.goto(f.base);
+      await accountantPage
+        .getByLabel("Email ou matricule")
+        .fill("accountant@browser.invalid");
+      await accountantPage
+        .getByLabel("Mot de passe", { exact: true })
+        .fill(f.password);
+      await accountantPage
+        .getByRole("button", { name: "Se connecter", exact: true })
+        .click();
+      await accountantPage
+        .getByRole("heading", { name: "Inscriptions & paiements", exact: true })
+        .waitFor();
+      assert.equal(
+        await accountantPage.locator('form[data-action="enrollments"]').count(),
+        0,
+      );
+      await accountantPage.locator("[data-enrollment]").first().click();
+      await accountantPage.locator("#student-dossier").waitFor();
+      assert.equal(
+        await accountantPage
+          .locator('form[data-action="enrollment-update"]')
+          .count(),
+        0,
+      );
+      assert.equal(
+        await accountantPage
+          .locator('form[data-operation="enrollment-fees"]')
+          .count(),
+        1,
+      );
+      assert.ok(
+        await accountantPage.locator('form[data-action="payments"]').count(),
+      );
       assert.deepEqual(errors, []);
     } finally {
       if (browser) await browser.close();

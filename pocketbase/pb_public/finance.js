@@ -52,6 +52,7 @@ function balance(d, e) {
   };
 }
 function financeScreen(d) {
+  const canManageEnrollments = currentUser.role === "administrator";
   if (!d.years.some((y) => y.id === financeYear))
     financeYear = d.years.find((y) => y.is_active)?.id || d.years[0]?.id || "";
   const years = d.years,
@@ -71,13 +72,13 @@ function financeScreen(d) {
   const available = students.filter(
     (u) => !enrollments.some((e) => e.student_id === u.id),
   );
-  return `<span class="badge">Scolarité · ${esc(d.school.name)}</span><h1>Inscriptions & paiements</h1><p>Inscrivez les élèves dans une classe et suivez les versements en FCFA.</p><label class="year-filter">Année scolaire<select id="finance-year">${options(
+  return `<span class="badge">Scolarité · ${esc(d.school.name)}</span><h1>Inscriptions & paiements</h1><p>${canManageEnrollments ? "Inscrivez les élèves dans une classe, définissez les frais et suivez les versements en FCFA." : "Consultez les frais prévus, définissez les montants, enregistrez les versements et suivez les échéances en FCFA."}</p><label class="year-filter">Année scolaire<select id="finance-year">${options(
     years,
     (x) => x.id,
     (x) => x.label,
     financeYear,
   )}</select></label><div class="metrics"><div><strong>${enrollments.length}</strong><span>Élèves inscrits</span></div><div><strong>${money(totals.total)}</strong><span>Frais prévus</span></div><div><strong>${money(totals.paid)}</strong><span>Versements enregistrés</span></div><div><strong>${money(totals.due)}</strong><span>Reste à payer</span></div></div><div class="grid"><section class="panel"><h2>Nouvelle inscription</h2>${
-    classes.length && available.length
+    canManageEnrollments && classes.length && available.length
       ? `<form data-action="enrollments"><input type="hidden" name="academic_year_id" value="${esc(financeYear)}"><label>Élève<select name="student_id" required>${options(available, (x) => x.id, fullName)}</select></label><label>Classe<select name="class_id" required>${options(
           classes,
           (x) => x.id,
@@ -88,7 +89,9 @@ function financeScreen(d) {
             "/" +
             x.capacity,
         )}</select></label>${field("enrolled_on", "Date d’inscription", "date", `value="${today()}"`)}${field("registration_fee", "Frais d’inscription (FCFA)", "number", 'min="0" max="1000000000" step="1" value="0"')}${field("tuition_fee", "Scolarité annuelle (FCFA)", "number", 'min="0" max="1000000000" step="1" value="0"')}<button type="submit">Inscrire et affecter à la classe</button></form>`
-      : `<p class="empty">${!years.length ? "Créez une année scolaire." : !classes.length ? "Créez une classe pour cette année." : !students.length ? "Créez un compte de rôle Élève." : "Tous les élèves ont déjà une inscription pour cette année."}</p><button data-page="structure">Ouvrir Classes & comptes</button>`
+      : canManageEnrollments
+        ? `<p class="empty">${!years.length ? "Créez une année scolaire." : !classes.length ? "Créez une classe pour cette année." : !students.length ? "Créez un compte de rôle Élève." : "Tous les élèves ont déjà une inscription pour cette année."}</p><button data-page="structure">Ouvrir Classes & comptes</button>`
+        : "<p>Ce compte peut suivre les soldes et enregistrer les versements. La création et la modification des inscriptions sont réservées à la direction.</p>"
   }</section><section class="panel"><h2>Versements et dossier élève</h2><p>Sélectionnez un élève dans le registre ci-dessous pour enregistrer un versement, consulter son historique ou changer sa classe.</p><p class="empty">Les versements sont enregistrés manuellement. Cette fonction ne prélève aucun argent sur un compte bancaire ou Mobile Money.</p></section><section class="panel wide"><div class="section-head"><h2>Registre des inscriptions</h2><button id="export-enrollments">Exporter CSV</button></div><label>Rechercher un élève ou une classe<input id="enrollment-search" type="search" placeholder="Nom, prénom ou classe"></label><div class="table-wrap"><table><thead><tr><th>Élève</th><th>Classe</th><th>Inscription</th><th>Total dû</th><th>Payé</th><th>Reste</th><th>État</th><th>Dossier</th></tr></thead><tbody>${enrollments
     .map((e) => {
       const u = d.people.find((u) => u.id === e.student_id),
@@ -101,7 +104,9 @@ function financeScreen(d) {
     )}</tbody></table>${enrollments.length ? "" : '<p class="empty">Aucune inscription pour cette année.</p>'}</div></section>${chosen ? enrollmentDetail(d, chosen) : ""}</div>`;
 }
 function enrollmentDetail(d, e) {
-  const b = balance(d, e),
+  const canManageEnrollments = currentUser.role === "administrator",
+    canManageFees = ["administrator", "accountant"].includes(currentUser.role),
+    b = balance(d, e),
     u = d.people.find((u) => u.id === e.student_id),
     payments = d.payments
       .filter((p) => p.enrollment_id === e.id)
@@ -120,12 +125,18 @@ function enrollmentDetail(d, e) {
             "",
           )}</select></label><label>Référence ou remarque (facultative)<input name="reference" maxlength="200"></label><button type="submit">Enregistrer le versement</button></form>`
       : "<p>Le dossier est soldé ou ne comporte aucun frais.</p>"
-  }</div><div><h3>Classe et frais prévus</h3><form data-action="enrollment-update"><input type="hidden" name="id" value="${e.id}"><label>Classe<select name="class_id">${options(
-    d.classes.filter((c) => c.academic_year_id === e.academic_year_id),
-    (x) => x.id,
-    (x) => x.name,
-    e.class_id,
-  )}</select></label>${field("enrolled_on", "Date d’inscription", "date", `value="${esc(e.enrolled_on)}"`)}${field("registration_fee", "Frais d’inscription (FCFA)", "number", `min="0" max="1000000000" step="1" value="${e.registration_fee}"`)}${field("tuition_fee", "Scolarité annuelle (FCFA)", "number", `min="0" max="1000000000" step="1" value="${e.tuition_fee}"`)}<button type="submit">Mettre à jour le dossier</button></form></div></div><h3>Échéancier</h3>${opForm("deadline", hidden("enrollment", e.id) + field("label", "Libellé : tranche 1") + field("due_on", "Échéance", "date") + field("amount", "Montant prévu (FCFA)", "number", 'min="1" max="2000000000" step="1"'), "Ajouter une échéance")}${table(
+  }</div>${
+    canManageEnrollments
+      ? `<div><h3>Classe et frais prévus</h3><form data-action="enrollment-update"><input type="hidden" name="id" value="${e.id}"><label>Classe<select name="class_id">${options(
+          d.classes.filter((c) => c.academic_year_id === e.academic_year_id),
+          (x) => x.id,
+          (x) => x.name,
+          e.class_id,
+        )}</select></label>${field("enrolled_on", "Date d’inscription", "date", `value="${esc(e.enrolled_on)}"`)}${field("registration_fee", "Frais d’inscription (FCFA)", "number", `min="0" max="1000000000" step="1" value="${e.registration_fee}"`)}${field("tuition_fee", "Scolarité annuelle (FCFA)", "number", `min="0" max="1000000000" step="1" value="${e.tuition_fee}"`)}<button type="submit">Mettre à jour le dossier</button></form></div>`
+      : currentUser.role === "accountant"
+        ? `<div><h3>Frais prévus</h3>${opForm("enrollment-fees", hidden("enrollment", e.id) + field("registration_fee", "Frais d’inscription (FCFA)", "number", `min="0" max="1000000000" step="1" value="${e.registration_fee}"`) + field("tuition_fee", "Scolarité annuelle (FCFA)", "number", `min="0" max="1000000000" step="1" value="${e.tuition_fee}"`), "Mettre à jour les frais")}<p class="empty">Les montants ne peuvent pas passer sous les paiements ou échéances déjà enregistrés.</p></div>`
+        : ""
+  }</div><h3>Échéancier</h3>${opForm("deadline", hidden("enrollment", e.id) + field("label", "Libellé : tranche 1") + field("due_on", "Échéance", "date") + field("amount", "Montant prévu (FCFA)", "number", 'min="1" max="2000000000" step="1"'), "Ajouter une échéance")}${table(
     ["Échéance", "Libellé", "Montant prévu", "Action"],
     (d.deadlines || [])
       .filter((x) => x.enrollment === e.id)

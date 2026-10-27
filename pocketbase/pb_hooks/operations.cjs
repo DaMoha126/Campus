@@ -120,8 +120,12 @@ function own(app, name, id, a) {
   if (r.getString(key) !== a.school) forbid();
   return r;
 }
-function admin(a) {
-  if (a.role !== "administrator") forbid();
+const staffRoles = ["administrator", "school_life", "accountant"];
+function hasRole(a, ...roles) {
+  return roles.includes(a.role);
+}
+function admin(a, ...roles) {
+  if (!hasRole(a, ...(roles.length ? roles : ["administrator"]))) forbid();
 }
 function assignment(app, id, a) {
   const r = own(app, "teaching_assignments", id, a);
@@ -181,7 +185,11 @@ function log(app, a, action, entity, id, summary = "") {
 }
 function state(app, auth) {
   const a = actor(app, auth),
-    isAdmin = a.role === "administrator";
+    isDirection = a.role === "administrator",
+    isRegistrar = a.role === "school_life",
+    isAccountant = a.role === "accountant",
+    isStaff = staffRoles.includes(a.role),
+    canSeeSchoolDirectory = isDirection || isRegistrar;
   const d = {};
   d.school = pack(app.findRecordById("establishments", a.school), [
     "name",
@@ -196,12 +204,18 @@ function state(app, auth) {
     "phone",
     "login_id",
   ]);
+  d.permissions = {
+    direction: isDirection,
+    schoolLife: isDirection || isRegistrar,
+    finance: isDirection || isAccountant,
+    academics: isDirection,
+  };
   const users = all(app, "school_users", a.school, [
     "first_name",
     "last_name",
     "role",
     "disabled",
-    ...(isAdmin ? ["email", "phone", "login_id"] : []),
+    ...(canSeeSchoolDirectory ? ["phone", "login_id"] : []),
   ]);
   d.years = all(app, "academic_years", a.school, [
     "label",
@@ -236,7 +250,7 @@ function state(app, auth) {
   if (a.role === "student") students = [a.id];
   if (a.role === "teacher")
     assignments = assignments.filter((x) => x.teacher === a.id);
-  const classroomIds = isAdmin
+  const classroomIds = isStaff
     ? classes.map((x) => x.id)
     : a.role === "teacher"
       ? assignments.map((x) => x.classroom)
@@ -251,7 +265,7 @@ function state(app, auth) {
         ),
       )
       .map((x) => x.student_id);
-  if (!isAdmin)
+  if (!isStaff)
     enrollments = enrollments.filter(
       (x) =>
         students.includes(x.student_id) &&
@@ -260,7 +274,7 @@ function state(app, auth) {
             classroomIds.includes(c),
           )),
     );
-  if (!isAdmin && a.role !== "teacher")
+  if (!isStaff && a.role !== "teacher")
     assignments = assignments.filter((x) => classroomIds.includes(x.classroom));
   d.classes = classes.filter((x) => classroomIds.includes(x.id));
   d.assignments = assignments;
@@ -269,7 +283,11 @@ function state(app, auth) {
     d.enrollments = d.enrollments.map(
       ({ registration_fee, tuition_fee, ...x }) => x,
     );
-  d.links = isAdmin
+  if (!isDirection && !isAccountant)
+    d.enrollments = d.enrollments.map(
+      ({ registration_fee, tuition_fee, ...x }) => x,
+    );
+  d.links = isStaff
     ? links
     : links.filter((x) =>
         a.role === "parent"
@@ -283,27 +301,72 @@ function state(app, auth) {
     ...students,
     ...assignments.map((x) => x.teacher),
     ...d.links.map((x) => x.parent),
-    ...users.filter((x) => x.role === "administrator").map((x) => x.id),
+    ...users.filter((x) => staffRoles.includes(x.role)).map((x) => x.id),
   ];
-  d.people = isAdmin
-    ? users
+  d.people = isStaff
+    ? users.filter((x) => !x.disabled).map(({ disabled, ...x }) => x)
     : users
         .filter((x) => contactIds.includes(x.id) && !x.disabled)
         .map(({ disabled, ...x }) => x);
+  if (isAccountant) {
+    d.assignments = [];
+    d.subjects = [];
+    d.periods = [];
+    d.evaluations = [];
+    d.grades = [];
+    d.homework = [];
+    d.lessons = [];
+    d.timetable = [];
+    d.attendance = [];
+    d.submissions = [];
+    d.absenceRequests = [];
+    d.announcements = [];
+    d.messages = all(
+      app,
+      "school_messages",
+      a.school,
+      fields.school_messages,
+    ).filter((x) => x.sender === a.id || x.recipient === a.id);
+    d.payments = all(app, "payments", a.school, [
+      "enrollment_id",
+      "amount",
+      "paid_on",
+      "method",
+      "reference",
+      "recorded_by",
+      "created",
+    ]);
+    const paymentIds = d.payments.map((x) => x.id);
+    d.reversals = all(
+      app,
+      "payment_reversals",
+      a.school,
+      fields.payment_reversals,
+    ).filter((x) => paymentIds.includes(x.payment));
+    d.deadlines = all(
+      app,
+      "payment_deadlines",
+      a.school,
+      fields.payment_deadlines,
+    );
+    d.reportComments = [];
+    d.audit = [];
+    return d;
+  }
   const assignmentIds = assignments.map((x) => x.id);
   d.subjects = all(app, "subjects", a.school, ["name"]).filter(
-    (x) => isAdmin || assignments.some((y) => y.subject === x.id),
+    (x) => isDirection || assignments.some((y) => y.subject === x.id),
   );
   d.periods = all(app, "school_periods", a.school, fields.school_periods);
   d.evaluations = all(app, "evaluations", a.school, fields.evaluations).filter(
     (x) =>
-      (isAdmin || assignmentIds.includes(x.assignment)) &&
-      (isAdmin || a.role === "teacher" || x.published),
+      (isStaff || assignmentIds.includes(x.assignment)) &&
+      (isStaff || a.role === "teacher" || x.published),
   );
   d.grades = all(app, "school_grades", a.school, fields.school_grades).filter(
     (x) =>
       d.evaluations.some((y) => y.id === x.evaluation) &&
-      (isAdmin || students.includes(x.student)),
+      (isStaff || students.includes(x.student)),
   );
   for (const [name, key] of [
     ["homework", "homework"],
@@ -313,13 +376,13 @@ function state(app, auth) {
   ])
     d[key] = all(app, name, a.school, fields[name]).filter(
       (x) =>
-        (isAdmin || assignmentIds.includes(x.assignment)) &&
-        (name !== "attendance" || isAdmin || students.includes(x.student)),
+        (isStaff || assignmentIds.includes(x.assignment)) &&
+        (name !== "attendance" || isStaff || students.includes(x.student)),
     );
   d.submissions = all(app, "submissions", a.school, fields.submissions).filter(
     (x) =>
       d.homework.some((y) => y.id === x.homework) &&
-      (isAdmin || a.role === "teacher" || students.includes(x.student)),
+      (isStaff || a.role === "teacher" || students.includes(x.student)),
   );
   d.absenceRequests = all(
     app,
@@ -332,7 +395,7 @@ function state(app, auth) {
     "school_announcements",
     a.school,
     fields.school_announcements,
-  ).filter((x) => isAdmin || x.audience === "all" || x.audience === a.role);
+  ).filter((x) => isStaff || x.audience === "all" || x.audience === a.role);
   d.messages = all(
     app,
     "school_messages",
@@ -341,7 +404,7 @@ function state(app, auth) {
   ).filter((x) => x.sender === a.id || x.recipient === a.id);
   const enrollmentIds = d.enrollments.map((x) => x.id);
   d.payments =
-    a.role === "teacher"
+    a.role === "teacher" || isRegistrar
       ? []
       : all(app, "payments", a.school, [
           "enrollment_id",
@@ -364,14 +427,17 @@ function state(app, auth) {
     "payment_deadlines",
     a.school,
     fields.payment_deadlines,
-  ).filter((x) => a.role !== "teacher" && enrollmentIds.includes(x.enrollment));
+  ).filter(
+    (x) =>
+      (isDirection || isAccountant) && enrollmentIds.includes(x.enrollment),
+  );
   d.reportComments = all(
     app,
     "report_comments",
     a.school,
     fields.report_comments,
-  ).filter((x) => isAdmin || students.includes(x.student));
-  d.audit = isAdmin
+  ).filter((x) => isStaff || students.includes(x.student));
+  d.audit = isDirection
     ? app
         .findRecordsByFilter(
           "school_audit",
@@ -408,7 +474,7 @@ function action(app, auth, b) {
         break;
       }
       case "edit-class": {
-        admin(a);
+        admin(a, "administrator", "school_life");
         const r = own(tx, "classes", data.id, a);
         const capacity = number(data.capacity, "Capacité", 1, 1000);
         if (!Number.isInteger(capacity)) bad("Capacité entière requise.");
@@ -437,7 +503,7 @@ function action(app, auth, b) {
         break;
       }
       case "edit-person": {
-        admin(a);
+        admin(a, "administrator", "school_life");
         const r = own(tx, "school_users", data.user, a);
         r.set("first_name", text(data.first_name, "Prénom"));
         r.set("last_name", text(data.last_name, "Nom"));
@@ -449,8 +515,91 @@ function action(app, auth, b) {
         result = r;
         break;
       }
+      case "create-person": {
+        admin(a, "administrator", "school_life");
+        const role = text(data.role, "Rôle", 30);
+        if (
+          !hasRole(a, "administrator") &&
+          !["student", "parent"].includes(role)
+        )
+          forbid();
+        const password = $security.randomString(12),
+          r = new Record(tx.findCollectionByNameOrId("school_users"));
+        r.set("first_name", text(data.first_name, "Prénom"));
+        r.set("last_name", text(data.last_name, "Nom"));
+        r.set("email", typeof data.email === "string" ? data.email.trim() : "");
+        r.set("emailVisibility", true);
+        r.set(
+          "phone",
+          typeof data.phone === "string" ? data.phone.slice(0, 40) : "",
+        );
+        r.set("role", role);
+        r.set("establishment_id", a.school);
+        r.set("password", password);
+        tx.save(r);
+        result = {
+          id: r.id,
+          credentials: [
+            {
+              first_name: r.getString("first_name"),
+              last_name: r.getString("last_name"),
+              email: r.getString("email"),
+              login_id: r.getString("login_id"),
+              password,
+            },
+          ],
+        };
+        break;
+      }
+      case "enrollment": {
+        admin(a, "administrator", "school_life");
+        const student = own(tx, "school_users", data.student, a),
+          classroom = own(tx, "classes", data.classroom, a),
+          year = own(tx, "academic_years", data.year, a),
+          enrolledOn = day(data.enrolled_on);
+        if (
+          student.getString("role") !== "student" ||
+          classroom.getString("academic_year_id") !== year.id
+        )
+          bad("Élève, classe ou année scolaire invalide.");
+        const duplicates = tx.findRecordsByFilter(
+          "enrollments",
+          "student_id={:student} && academic_year_id={:year}",
+          "",
+          1,
+          0,
+          { student: student.id, year: year.id },
+        );
+        if (duplicates.length)
+          bad("Cet élève est déjà inscrit pour cette année.");
+        const count = tx.findRecordsByFilter(
+          "enrollments",
+          "class_id={:classroom}",
+          "",
+          0,
+          0,
+          { classroom: classroom.id },
+        ).length;
+        if (count >= classroom.getInt("capacity"))
+          bad("Cette classe a atteint sa capacité maximale.");
+        const r = new Record(tx.findCollectionByNameOrId("enrollments"));
+        for (const [key, value] of Object.entries({
+          establishment_id: a.school,
+          student_id: student.id,
+          academic_year_id: year.id,
+          class_id: classroom.id,
+          enrolled_on: enrolledOn,
+          registration_fee: 0,
+          tuition_fee: 0,
+          previous_classes: [],
+        }))
+          r.set(key, value);
+        tx.save(r);
+        result = r;
+        break;
+      }
       case "import-students": {
-        admin(a);
+        admin(a, "administrator", "school_life");
         const classroom = own(tx, "classes", data.classroom, a);
         const rows = require(__hooks + "/csv-import.cjs")(data.csv);
         const registration = number(
@@ -462,6 +611,8 @@ function action(app, auth, b) {
           tuition = number(data.tuition_fee, "Scolarité", 0, 1000000000);
         if (!Number.isInteger(registration) || !Number.isInteger(tuition))
           bad("Montants entiers requis.");
+        if (a.role === "school_life" && (registration !== 0 || tuition !== 0))
+          forbid("La scolarité ne peut pas définir les frais.");
         const date = day(data.enrolled_on),
           credentials = [];
         for (const row of rows) {
@@ -515,7 +666,7 @@ function action(app, auth, b) {
         break;
       }
       case "parent-link": {
-        admin(a);
+        admin(a, "administrator", "school_life");
         const p = own(tx, "school_users", data.parent, a),
           s = own(tx, "school_users", data.student, a);
         if (
@@ -792,7 +943,7 @@ function action(app, auth, b) {
         break;
       }
       case "absence-review": {
-        admin(a);
+        admin(a, "administrator", "school_life");
         const request = own(tx, "absence_requests", data.id, a),
           at = own(tx, "attendance", request.getString("attendance"), a);
         if (!["accepted", "rejected"].includes(data.status))
@@ -814,7 +965,7 @@ function action(app, auth, b) {
         break;
       }
       case "announcement": {
-        admin(a);
+        admin(a, "administrator", "school_life");
         if (!["all", "student", "parent", "teacher"].includes(data.audience))
           bad("Destinataires invalides.");
         result = save(tx, "school_announcements", a, {
@@ -836,7 +987,7 @@ function action(app, auth, b) {
           forbid();
         if (
           ["student", "parent"].includes(a.role) &&
-          !["teacher", "administrator"].includes(recipient.getString("role"))
+          ![...staffRoles, "teacher"].includes(recipient.getString("role"))
         )
           forbid();
         result = save(tx, "school_messages", a, {
@@ -855,7 +1006,7 @@ function action(app, auth, b) {
         break;
       }
       case "report-comment": {
-        admin(a);
+        admin(a, "administrator", "school_life");
         const period = own(tx, "school_periods", data.period, a),
           student = own(tx, "school_users", data.student, a);
         if (
@@ -892,7 +1043,7 @@ function action(app, auth, b) {
         break;
       }
       case "deadline": {
-        admin(a);
+        admin(a, "administrator", "accountant");
         const en = own(tx, "enrollments", data.enrollment, a);
         const amount = number(data.amount, "Montant", 1, 2000000000);
         if (!Number.isInteger(amount)) bad("Montant entier requis.");
@@ -916,8 +1067,50 @@ function action(app, auth, b) {
         });
         break;
       }
+      case "enrollment-fees": {
+        admin(a, "administrator", "accountant");
+        const en = own(tx, "enrollments", data.enrollment, a),
+          registration = number(
+            data.registration_fee,
+            "Frais d’inscription",
+            0,
+            1000000000,
+          ),
+          tuition = number(data.tuition_fee, "Scolarité", 0, 1000000000);
+        if (
+          !Number.isSafeInteger(registration) ||
+          !Number.isSafeInteger(tuition)
+        )
+          bad("Les montants doivent être des nombres entiers en FCFA.");
+        const paid = new DynamicModel({ total: 0 }),
+          planned = new DynamicModel({ total: 0 });
+        tx.db()
+          .newQuery(
+            "SELECT COALESCE(SUM(amount),0) total FROM payments p WHERE enrollment_id={:id} AND NOT EXISTS (SELECT 1 FROM payment_reversals r WHERE r.payment=p.id)",
+          )
+          .bind({ id: en.id })
+          .one(paid);
+        tx.db()
+          .newQuery(
+            "SELECT COALESCE(SUM(amount),0) total FROM payment_deadlines WHERE enrollment={:id}",
+          )
+          .bind({ id: en.id })
+          .one(planned);
+        const total = registration + tuition;
+        if (total < paid.total)
+          bad("Les frais ne peuvent pas être inférieurs aux versements nets.");
+        if (total < planned.total)
+          bad(
+            "Les frais ne peuvent pas être inférieurs aux échéances prévues.",
+          );
+        en.set("registration_fee", registration);
+        en.set("tuition_fee", tuition);
+        tx.save(en);
+        result = en;
+        break;
+      }
       case "reverse-payment": {
-        admin(a);
+        admin(a, "administrator", "accountant");
         const p = own(tx, "payments", data.payment, a);
         result = save(tx, "payment_reversals", a, {
           payment: p.id,
@@ -977,7 +1170,6 @@ function action(app, auth, b) {
         break;
       }
       case "delete-item": {
-        admin(a);
         if (
           ![
             "timetable_slots",
@@ -990,6 +1182,9 @@ function action(app, auth, b) {
           ].includes(data.entity)
         )
           forbid();
+        if (data.entity === "payment_deadlines")
+          admin(a, "administrator", "accountant");
+        else admin(a);
         const r = own(tx, data.entity, data.id, a);
         tx.delete(r);
         result = { id: data.id };
@@ -1011,7 +1206,9 @@ function action(app, auth, b) {
   return {
     saved: true,
     id: result.id,
-    ...(op === "import-students" ? { credentials: result.credentials } : {}),
+    ...(["import-students", "create-person"].includes(op)
+      ? { credentials: result.credentials }
+      : {}),
   };
 }
 module.exports = { state, action };
