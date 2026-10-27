@@ -252,6 +252,8 @@ test(
       await page
         .getByText("Moyenne générale : 18.00 /20", { exact: true })
         .waitFor();
+      await page.getByText(/Rang : 1er sur 1 élève classé/).waitFor();
+      await page.getByText(/Mention : Excellent/).waitFor();
       await page
         .getByRole("button", { name: "Imprimer le bulletin", exact: true })
         .click();
@@ -334,6 +336,50 @@ test(
           "Dictée de français",
         ),
       );
+      const completedPeriod = ok(
+        await f.action(admin, "period", {
+          year: year.id,
+          label: "Période clôturée",
+          starts_on: "2026-09-01",
+          ends_on: "2026-10-01",
+        }),
+      );
+      ok(
+        await f.action(admin, "evaluation", {
+          assignment: frenchAssignment.id,
+          period: completedPeriod.id,
+          title: "Évaluation clôturée",
+          held_on: "2026-09-20",
+          maximum: 20,
+          weight: 1,
+        }),
+      );
+      ok(
+        await f.action(admin, "lock-period", {
+          id: completedPeriod.id,
+          locked: true,
+        }),
+      );
+      await page
+        .getByRole("button", { name: "Organisation pédagogique", exact: true })
+        .click();
+      await page.getByText("Clôturée", { exact: true }).first().waitFor();
+      await page
+        .getByRole("button", { name: "Notes & évaluations", exact: true })
+        .click();
+      await page.locator("#grades-class").selectOption(cl.id);
+      await page.locator("#grades-period").selectOption(completedPeriod.id);
+      await page
+        .getByRole("heading", { name: "Période clôturée", exact: true })
+        .waitFor();
+      assert.equal(
+        await page.locator('form[data-operation="grade"]').count(),
+        0,
+      );
+      const openPeriod = ok(await f.state(admin)).periods.find(
+        (x) => x.label === "Trimestre 1",
+      );
+      await page.locator("#grades-period").selectOption(openPeriod.id);
       assert.ok(
         !(await page.locator("#grade-groups").innerText()).includes(
           "Contrôle classe B",
@@ -676,9 +722,16 @@ test(
         require("node:fs").readFileSync(await credentials.path(), "utf8"),
         /Rokia/,
       );
+      const createdStudent = ok(await f.state(admin)).people.find(
+        (x) => x.first_name === "Rokia" && x.last_name === "Nouveau",
+      );
+      assert.ok(createdStudent);
       const enrollmentForm = registrarPage.locator(
         'form[data-operation="enrollment"]',
       );
+      await enrollmentForm
+        .locator('[name="student"]')
+        .selectOption(createdStudent.id);
       await enrollmentForm.locator('[name="enrolled_on"]').fill("2026-10-20");
       await enrollmentForm.locator('[name="classroom"]').selectOption(cl.id);
       await registrarPage

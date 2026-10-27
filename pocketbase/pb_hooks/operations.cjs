@@ -1,7 +1,7 @@
 const fields = {
   teaching_assignments: ["teacher", "classroom", "subject", "coefficient"],
   parent_links: ["parent", "student"],
-  school_periods: ["year", "label", "starts_on", "ends_on"],
+  school_periods: ["year", "label", "starts_on", "ends_on", "locked"],
   evaluations: [
     "assignment",
     "period",
@@ -237,6 +237,7 @@ function state(app, auth) {
     "tuition_fee",
     "previous_classes",
   ]);
+  const allEnrollments = enrollments.slice();
   const links = all(app, "parent_links", a.school, fields.parent_links);
   let assignments = all(
     app,
@@ -368,6 +369,83 @@ function state(app, auth) {
       d.evaluations.some((y) => y.id === x.evaluation) &&
       (isStaff || students.includes(x.student)),
   );
+  if (a.role === "parent" || a.role === "student") {
+    const visibleStudentIds = students;
+    const allGrades = all(app, "school_grades", a.school, fields.school_grades);
+    d.reportRanks = [];
+    for (const enrollment of enrollments) {
+      if (!visibleStudentIds.includes(enrollment.student_id)) continue;
+      for (const period of d.periods.filter(
+        (x) => x.year === enrollment.academic_year_id,
+      )) {
+        const classAssignments = assignments.filter(
+          (x) => x.classroom === enrollment.class_id,
+        );
+        const classEvaluations = d.evaluations.filter((x) =>
+          classAssignments.some((y) => y.id === x.assignment),
+        );
+        const roster = allEnrollments.filter(
+          (x) =>
+            x.class_id === enrollment.class_id &&
+            x.academic_year_id === enrollment.academic_year_id,
+        );
+        const averages = [];
+        for (const peer of roster) {
+          const bySubject = new Map();
+          for (const assignment of classAssignments) {
+            const evals = classEvaluations.filter(
+              (x) => x.assignment === assignment.id && x.period === period.id,
+            );
+            let weighted = 0,
+              weights = 0;
+            for (const grade of allGrades) {
+              const evaluation = evals.find((x) => x.id === grade.evaluation);
+              if (
+                !evaluation ||
+                grade.student !== peer.student_id ||
+                grade.status !== "graded"
+              )
+                continue;
+              weighted +=
+                (grade.score / evaluation.maximum) * 20 * evaluation.weight;
+              weights += evaluation.weight;
+            }
+            if (weights) {
+              const previous = bySubject.get(assignment.subject) || {
+                sum: 0,
+                weight: 0,
+                coefficient: assignment.coefficient,
+              };
+              previous.sum += (weighted / weights) * assignment.coefficient;
+              previous.weight += assignment.coefficient;
+              bySubject.set(assignment.subject, previous);
+            }
+          }
+          let sum = 0,
+            weight = 0;
+          for (const value of bySubject.values()) {
+            sum += value.sum;
+            weight += value.weight;
+          }
+          if (weight)
+            averages.push({ student: peer.student_id, average: sum / weight });
+        }
+        const ownAverage = averages.find(
+          (x) => x.student === enrollment.student_id,
+        );
+        if (!ownAverage) continue;
+        d.reportRanks.push({
+          student: enrollment.student_id,
+          period: period.id,
+          rank:
+            1 +
+            averages.filter((x) => x.average > ownAverage.average + 1e-9)
+              .length,
+          class_size: averages.length,
+        });
+      }
+    }
+  } else d.reportRanks = [];
   for (const [name, key] of [
     ["homework", "homework"],
     ["lesson_log", "lessons"],
@@ -696,12 +774,35 @@ function action(app, auth, b) {
         });
         break;
       }
+      case "lock-period": {
+        admin(a);
+        const period = own(tx, "school_periods", data.id, a);
+        if (typeof data.locked !== "boolean") bad("État invalide.");
+        if (
+          data.locked &&
+          period.getString("ends_on").slice(0, 10) >=
+            new Date().toISOString().slice(0, 10)
+        )
+          bad("Une période ne peut être clôturée qu’après sa date de fin.");
+        result = save(
+          tx,
+          "school_periods",
+          a,
+          { locked: data.locked },
+          period.id,
+        );
+        break;
+      }
       case "evaluation": {
         const as = assignment(tx, data.assignment, a),
           period = own(tx, "school_periods", data.period, a),
           c = own(tx, "classes", as.getString("classroom"), a);
         if (period.getString("year") !== c.getString("academic_year_id"))
           bad("Période d’une autre année.");
+        if (period.getBool("locked"))
+          bad(
+            "Cette période est clôturée. Rouvrez-la pour modifier les notes.",
+          );
         const held = day(data.held_on);
         if (
           held < period.getString("starts_on") ||
@@ -722,6 +823,12 @@ function action(app, auth, b) {
       case "publish-evaluation": {
         const ev = own(tx, "evaluations", data.id, a);
         assignment(tx, ev.getString("assignment"), a);
+        if (
+          own(tx, "school_periods", ev.getString("period"), a).getBool("locked")
+        )
+          bad(
+            "Cette période est clôturée. Rouvrez-la pour modifier les notes.",
+          );
         if (typeof data.published !== "boolean") bad("État invalide.");
         result = save(
           tx,
@@ -736,6 +843,12 @@ function action(app, auth, b) {
         const ev = own(tx, "evaluations", data.evaluation, a),
           as = assignment(tx, ev.getString("assignment"), a),
           student = own(tx, "school_users", data.student, a);
+        if (
+          own(tx, "school_periods", ev.getString("period"), a).getBool("locked")
+        )
+          bad(
+            "Cette période est clôturée. Rouvrez-la pour modifier les notes.",
+          );
         if (
           student.getString("role") !== "student" ||
           !enrolled(tx, student.id, as.getString("classroom"), a.school)
@@ -1186,6 +1299,8 @@ function action(app, auth, b) {
           admin(a, "administrator", "accountant");
         else admin(a);
         const r = own(tx, data.entity, data.id, a);
+        if (data.entity === "school_periods" && r.getBool("locked"))
+          bad("Rouvrez la période avant de la supprimer.");
         tx.delete(r);
         result = { id: data.id };
         break;

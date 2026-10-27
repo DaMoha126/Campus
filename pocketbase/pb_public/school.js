@@ -300,6 +300,8 @@ function gradesScreen(d) {
   if (!evals.some((e) => e.id === schoolEval)) schoolEval = evals[0]?.id || "";
   const evaluation = evals.find((e) => e.id === schoolEval);
   const assignment = assignments.find((a) => a.id === evaluation?.assignment);
+  const evaluationPeriod = d.periods.find((p) => p.id === evaluation?.period);
+  const gradeEntryLocked = !!evaluationPeriod?.locked;
   const filters = panel(
     "Choisir une classe et une matière",
     `<div class="grade-filters"><label>Classe<select id="grades-class"><option value="" ${gradesClass === "" ? "selected" : ""}>Toutes les classes</option>${options(
@@ -315,19 +317,25 @@ function gradesScreen(d) {
     )}</select></label><label>Période<select id="grades-period"><option value="" ${gradesPeriod === "" ? "selected" : ""}>Toutes les périodes</option>${options(
       periods,
       (p) => p.id,
-      (p) => p.label + " · " + d.years.find((y) => y.id === p.year)?.label,
+      (p) =>
+        p.label +
+        (p.locked ? " · Clôturée" : "") +
+        " · " +
+        d.years.find((y) => y.id === p.year)?.label,
       gradesPeriod,
     )}</select></label></div>`,
   );
   const createPeriods = periods.filter(
     (p) =>
+      !p.locked &&
       p.year ===
-      classes.find((c) => c.id === assignments[0]?.classroom)?.academic_year_id,
+        classes.find((c) => c.id === assignments[0]?.classroom)
+          ?.academic_year_id,
   );
   const create = teaching
     ? panel(
         "Créer une évaluation",
-        assignments.length && periods.length
+        assignments.length && createPeriods.length
           ? opForm(
               "evaluation",
               select(
@@ -363,50 +371,55 @@ function gradesScreen(d) {
                   'min="0.1" max="20" step="0.1" value="1"',
                 ),
             )
-          : "<p>Affectez les enseignants et créez les périodes dans Organisation pédagogique.</p>",
+          : "<p>Affectez les enseignants et créez une période ouverte dans Organisation pédagogique.</p>",
       )
     : "";
   const entry =
-    teaching && evaluation
+    teaching && evaluation && gradeEntryLocked
       ? panel(
-          "Saisir ou corriger une note",
-          `<label>Évaluation<select id="school-evaluation">${options(
-            evals,
-            (e) => e.id,
-            (e) => e.title + " · " + titleOf(d, e.assignment),
-            schoolEval,
-          )}</select></label>` +
-            opForm(
-              "grade",
-              hidden("evaluation", schoolEval) +
-                select(
-                  "student",
-                  "Élève",
-                  schoolClassRoster(d, assignment?.classroom),
-                  (p) => p.id,
-                  (p) => fullName(p) + (p.login_id ? " · " + p.login_id : ""),
-                ) +
-                select(
-                  "status",
-                  "Statut",
-                  [
-                    { id: "graded", name: "Noté" },
-                    { id: "absent", name: "Absent (exclu de la moyenne)" },
-                    { id: "exempt", name: "Dispensé" },
-                  ],
-                  (s) => s.id,
-                  (s) => s.name,
-                ) +
-                field(
-                  "score",
-                  "Note",
-                  "number",
-                  `min="0" max="${evaluation.maximum}" step="0.01" value="0"`,
-                ) +
-                '<label>Appréciation<input name="comment" maxlength="1000"></label>',
-            ),
+          "Période clôturée",
+          "<p>La saisie, la correction et la publication des notes sont désactivées. La direction peut rouvrir cette période dans Organisation pédagogique.</p>",
         )
-      : "";
+      : teaching && evaluation
+        ? panel(
+            "Saisir ou corriger une note",
+            `<label>Évaluation<select id="school-evaluation">${options(
+              evals,
+              (e) => e.id,
+              (e) => e.title + " · " + titleOf(d, e.assignment),
+              schoolEval,
+            )}</select></label>` +
+              opForm(
+                "grade",
+                hidden("evaluation", schoolEval) +
+                  select(
+                    "student",
+                    "Élève",
+                    schoolClassRoster(d, assignment?.classroom),
+                    (p) => p.id,
+                    (p) => fullName(p) + (p.login_id ? " · " + p.login_id : ""),
+                  ) +
+                  select(
+                    "status",
+                    "Statut",
+                    [
+                      { id: "graded", name: "Noté" },
+                      { id: "absent", name: "Absent (exclu de la moyenne)" },
+                      { id: "exempt", name: "Dispensé" },
+                    ],
+                    (s) => s.id,
+                    (s) => s.name,
+                  ) +
+                  field(
+                    "score",
+                    "Note",
+                    "number",
+                    `min="0" max="${evaluation.maximum}" step="0.01" value="0"`,
+                  ) +
+                  '<label>Appréciation<input name="comment" maxlength="1000"></label>',
+              ),
+          )
+        : "";
   const grades = new Map(
     d.grades.map((g) => [g.evaluation + ":" + g.student, g]),
   );
@@ -468,11 +481,13 @@ function gradesScreen(d) {
                     esc(e.title),
                     esc(e.held_on),
                     e.published ? "Publiée" : "Brouillon",
-                    opButton(
-                      "publish-evaluation",
-                      { id: e.id, published: !e.published },
-                      e.published ? "Dépublier" : "Publier",
-                    ),
+                    d.periods.find((p) => p.id === e.period)?.locked
+                      ? "Période clôturée"
+                      : opButton(
+                          "publish-evaluation",
+                          { id: e.id, published: !e.published },
+                          e.published ? "Dépublier" : "Publier",
+                        ),
                   ]),
                 )}`
               : ""
@@ -680,12 +695,13 @@ function schoolScreen(d) {
             dateField("ends_on", "Fin"),
         ) +
           table(
-            ["Période", "Début", "Fin", "Action"],
+            ["Période", "Début", "Fin", "État", "Action"],
             d.periods.map((x) => [
               esc(x.label),
               esc(x.starts_on),
               esc(x.ends_on),
-              deleteButton("school_periods", x.id),
+              x.locked ? "Clôturée" : "Ouverte",
+              `${opButton("lock-period", { id: x.id, locked: !x.locked }, x.locked ? "Rouvrir" : "Clôturer")}${deleteButton("school_periods", x.id)}`,
             ]),
           ),
       )}${panel(
@@ -1143,6 +1159,86 @@ function reportScreen(d) {
       weight += g.coefficient;
     }
   const general = weight ? (sum / weight).toFixed(2) : "—";
+  const averageFor = (studentId) => {
+    const subjects = new Map();
+    for (const assignment of d.assignments.filter(
+      (x) => en && x.classroom === en.class_id,
+    )) {
+      const evals = d.evaluations.filter(
+        (x) =>
+          x.assignment === assignment.id &&
+          x.period === reportPeriod &&
+          x.published,
+      );
+      let subtotal = 0,
+        weights = 0;
+      for (const grade of d.grades) {
+        const evaluation = evals.find((x) => x.id === grade.evaluation);
+        if (
+          !evaluation ||
+          grade.student !== studentId ||
+          grade.status !== "graded"
+        )
+          continue;
+        subtotal += (grade.score / evaluation.maximum) * 20 * evaluation.weight;
+        weights += evaluation.weight;
+      }
+      if (!weights) continue;
+      const previous = subjects.get(assignment.subject) || {
+        sum: 0,
+        weight: 0,
+      };
+      previous.sum += (subtotal / weights) * assignment.coefficient;
+      previous.weight += assignment.coefficient;
+      subjects.set(assignment.subject, previous);
+    }
+    let total = 0,
+      coefficients = 0;
+    for (const subject of subjects.values()) {
+      total += subject.sum;
+      coefficients += subject.weight;
+    }
+    return coefficients ? total / coefficients : null;
+  };
+  const storedRank = d.reportRanks?.find(
+    (x) => x.student === reportStudent && x.period === reportPeriod,
+  );
+  const roster = d.enrollments.filter(
+    (x) =>
+      en &&
+      x.class_id === en.class_id &&
+      x.academic_year_id === en.academic_year_id,
+  );
+  const peerAverages = roster
+    .map((x) => averageFor(x.student_id))
+    .filter((x) => x !== null);
+  const ownAverage = weight ? sum / weight : null;
+  const rank =
+    storedRank ||
+    (ownAverage === null
+      ? null
+      : {
+          rank: 1 + peerAverages.filter((x) => x > ownAverage + 1e-9).length,
+          class_size: peerAverages.length,
+        });
+  const rankLabel = rank
+    ? `${rank.rank === 1 ? "1er" : `${rank.rank}e`} sur ${rank.class_size} élève${rank.class_size > 1 ? "s" : ""} classé${rank.class_size > 1 ? "s" : ""}`
+    : "—";
+  const numericAverage = weight ? sum / weight : null;
+  const mention =
+    numericAverage === null
+      ? "—"
+      : numericAverage >= 16
+        ? "Excellent"
+        : numericAverage >= 14
+          ? "Très bien"
+          : numericAverage >= 12
+            ? "Bien"
+            : numericAverage >= 10
+              ? "Assez bien"
+              : numericAverage >= 8
+                ? "Insuffisant"
+                : "Très insuffisant";
   const comment =
     d.reportComments.find(
       (x) => x.student === reportStudent && x.period === reportPeriod,
@@ -1163,7 +1259,7 @@ function reportScreen(d) {
       g.coefficient,
       g.average === null ? "—" : g.average.toFixed(2),
     ]),
-  )}<h3>Moyenne générale : ${general} /20</h3><p class="prewrap">${esc(comment)}</p><p class="empty">Moyennes pondérées des seules évaluations publiées. Les absences et dispenses sont exclues. Ce bulletin est un document interne de l’établissement.</p></section>`;
+  )}<h3>Moyenne générale : ${general} /20</h3><p><strong>Rang :</strong> ${esc(rankLabel)} · <strong>Mention :</strong> ${esc(mention)}</p><p class="prewrap">${esc(comment)}</p><p class="empty">Rang calculé à partir des moyennes générales des élèves ayant au moins une note publiée dans la classe. À égalité, les élèves partagent le même rang. Les absences et dispenses sont exclues. Ce bulletin est un document interne de l’établissement.</p></section>`;
 }
 document.addEventListener("click", async (event) => {
   const openClass = event.target.closest("[data-open-class]");
@@ -1197,11 +1293,18 @@ document.addEventListener("click", async (event) => {
     if (
       [
         "delete-item",
+        "lock-period",
         "disable-user",
         "reset-password",
         "reverse-payment",
       ].includes(op) &&
-      !window.confirm("Confirmer cette opération ?")
+      !window.confirm(
+        op === "lock-period"
+          ? JSON.parse(quick.dataset.payload).locked
+            ? "Clôturer cette période ? Les notes ne pourront plus être modifiées."
+            : "Rouvrir cette période ?"
+          : "Confirmer cette opération ?",
+      )
     )
       return;
     quick.disabled = true;

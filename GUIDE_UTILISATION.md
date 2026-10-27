@@ -55,10 +55,14 @@ Choisissez un élève et une période. Seules les évaluations **publiées** son
 - Chaque note est ramenée sur 20 : `note / barème × 20`.
 - Moyenne de matière : somme des notes ramenées sur 20 multipliées par le coefficient d’évaluation, divisée par la somme de ces coefficients.
 - Moyenne générale : moyenne pondérée des matières ayant des notes, selon leurs coefficients.
+- Rang dans la classe : classement par moyenne générale parmi les élèves avec au moins une note publiée ; les ex æquo partagent le même rang.
+- Mention indicative : Excellent (16/20), Très bien (14), Bien (12), Assez bien (10), Insuffisant (8), puis Très insuffisant. Ces seuils sont des repères configurés par l’établissement.
 - Absences et dispenses sont exclues du calcul, sans être transformées en zéros.
 - Les notes des classes précédentes enregistrées dans l’historique de l’année restent prises en compte. Le coefficient de l’affectation de la classe actuelle est retenu s’il existe pour cette matière.
 
 L’administration peut ajouter une appréciation générale. Le bouton d’impression permet de sortir le bulletin sur papier ou en PDF via le navigateur. Il s’agit d’un document interne, sans signature électronique ni modèle réglementaire national certifié.
+
+La direction peut clôturer une période scolaire après sa date de fin depuis Organisation pédagogique. Une période clôturée bloque la création d’évaluations, la saisie et la correction des notes ainsi que leur publication. La direction peut la rouvrir pour effectuer une correction ; elle doit être rouverte avant suppression. Les appréciations générales restent modifiables après clôture.
 
 ## Scolarité et versements
 

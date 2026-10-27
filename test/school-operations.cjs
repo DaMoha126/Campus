@@ -416,6 +416,22 @@ test(
           assert.equal(ok(await state(tokens.parent)).grades[0].score, 16);
           assert.equal(ok(await state(tokens.parent2)).grades.length, 0);
           assert.equal(ok(await state(tokens.student2)).grades.length, 0);
+          const familyState = ok(await state(tokens.parent));
+          assert.ok(
+            familyState.reportRanks.some(
+              (x) =>
+                x.student === users.student.id &&
+                x.period === period.id &&
+                x.rank === 1 &&
+                x.class_size === 1,
+            ),
+          );
+          assert.deepEqual(Object.keys(familyState.reportRanks[0]).sort(), [
+            "class_size",
+            "period",
+            "rank",
+            "student",
+          ]);
           denied(
             await req(
               "collections/school_grades/records",
@@ -430,6 +446,86 @@ test(
               tokens.student,
               "PATCH",
             ),
+          );
+          const completed = ok(
+            await action(tokens.admin, "period", {
+              year: year.id,
+              label: "Période terminée",
+              starts_on: "2026-09-01",
+              ends_on: "2026-10-01",
+            }),
+          );
+          const completedEval = ok(
+            await action(tokens.teacher, "evaluation", {
+              assignment: as.id,
+              period: completed.id,
+              title: "Évaluation terminée",
+              held_on: "2026-09-20",
+              maximum: 20,
+              weight: 1,
+            }),
+          );
+          denied(
+            await action(tokens.teacher, "lock-period", {
+              id: completed.id,
+              locked: true,
+            }),
+          );
+          ok(
+            await action(tokens.admin, "lock-period", {
+              id: completed.id,
+              locked: true,
+            }),
+          );
+          assert.equal(
+            ok(await state(tokens.parent)).periods.find(
+              (x) => x.id === completed.id,
+            ).locked,
+            true,
+          );
+          denied(
+            await action(tokens.teacher, "grade", {
+              evaluation: completedEval.id,
+              student: users.student.id,
+              status: "graded",
+              score: 17,
+            }),
+          );
+          denied(
+            await action(tokens.teacher, "publish-evaluation", {
+              id: completedEval.id,
+              published: true,
+            }),
+          );
+          denied(
+            await action(tokens.teacher, "evaluation", {
+              assignment: as.id,
+              period: completed.id,
+              title: "Modification interdite",
+              held_on: "2026-09-25",
+              maximum: 20,
+              weight: 1,
+            }),
+          );
+          denied(
+            await action(tokens.admin, "delete-item", {
+              entity: "school_periods",
+              id: completed.id,
+            }),
+          );
+          ok(
+            await action(tokens.admin, "lock-period", {
+              id: completed.id,
+              locked: false,
+            }),
+          );
+          ok(
+            await action(tokens.teacher, "grade", {
+              evaluation: completedEval.id,
+              student: users.student.id,
+              status: "graded",
+              score: 17,
+            }),
           );
         },
       );
