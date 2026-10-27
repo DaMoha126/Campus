@@ -604,6 +604,75 @@ test(
               room: "A2",
             }),
           );
+          ok(
+            await action(tokens.admin, "timetable", {
+              assignment: as.id,
+              weekday: 1,
+              start_time: "09:00",
+              end_time: "10:00",
+              room: "A1",
+              week_type: "odd",
+              valid_from: "2026-09-01",
+              valid_until: "2026-12-31",
+            }),
+          );
+          ok(
+            await action(tokens.admin, "timetable", {
+              assignment: as.id,
+              weekday: 1,
+              start_time: "09:00",
+              end_time: "10:00",
+              room: "A1",
+              week_type: "even",
+              valid_from: "2026-09-01",
+              valid_until: "2026-12-31",
+            }),
+          );
+          denied(
+            await action(tokens.admin, "timetable", {
+              assignment: as.id,
+              weekday: 1,
+              start_time: "09:00",
+              end_time: "10:00",
+              room: "A1",
+              week_type: "odd",
+              valid_from: "2026-09-01",
+              valid_until: "2026-12-31",
+            }),
+          );
+          ok(
+            await action(tokens.admin, "timetable", {
+              assignment: as.id,
+              weekday: 1,
+              start_time: "10:00",
+              end_time: "11:00",
+              week_type: "odd",
+              valid_from: "2026-09-01",
+              valid_until: "2026-12-31",
+            }),
+          );
+          ok(
+            await action(tokens.admin, "timetable", {
+              assignment: as.id,
+              weekday: 1,
+              start_time: "10:00",
+              end_time: "11:00",
+              week_type: "odd",
+              valid_from: "2027-01-01",
+              valid_until: "2027-07-31",
+            }),
+          );
+          denied(
+            await action(tokens.admin, "timetable", {
+              assignment: as.id,
+              weekday: 1,
+              start_time: "10:00",
+              end_time: "11:00",
+              week_type: "even",
+              valid_from: "2027-01-01",
+              valid_until: "2026-12-31",
+            }),
+          );
           denied(
             await action(tokens.admin, "timetable", {
               assignment: as.id,

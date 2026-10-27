@@ -219,8 +219,10 @@ test(
       await form.locator("[name=start_time]").fill("08:00");
       await form.locator("[name=end_time]").fill("09:00");
       await form.locator("[name=room]").fill("Salle A");
+      await form.locator("[name=week_type]").selectOption("odd");
       await form.locator("[type=submit]").click();
       await page.getByText("08:00–09:00", { exact: true }).waitFor();
+      await page.getByText("Semaines impaires", { exact: true }).waitFor();
       form = page.locator("form[data-operation=timetable]");
       await form.locator("[name=start_time]").fill("08:30");
       await form.locator("[name=end_time]").fill("09:30");

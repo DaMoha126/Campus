@@ -772,7 +772,18 @@ function schoolScreen(d) {
                   ) +
                   field("start_time", "Début", "time") +
                   field("end_time", "Fin", "time") +
-                  '<label>Salle (facultative)<input name="room" maxlength="100"></label>',
+                  select(
+                    "week_type",
+                    "Rythme",
+                    [
+                      { id: "all", name: "Chaque semaine" },
+                      { id: "odd", name: "Semaines impaires" },
+                      { id: "even", name: "Semaines paires" },
+                    ],
+                    (x) => x.id,
+                    (x) => x.name,
+                  ) +
+                  '<label>Salle (facultative)<input name="room" maxlength="100"></label><label>Valide à partir du (facultatif)<input name="valid_from" type="date"></label><label>Valide jusqu’au (facultatif)<input name="valid_until" type="date"></label>',
               ),
             )
           : ""
@@ -785,6 +796,7 @@ function schoolScreen(d) {
             "Classe / matière",
             "Enseignant",
             "Salle",
+            "Rythme / validité",
             ...(admin ? ["Action"] : []),
           ],
           d.timetable
@@ -813,10 +825,11 @@ function schoolScreen(d) {
                 ),
               ),
               esc(x.room),
+              `${x.week_type === "odd" ? "Semaines impaires" : x.week_type === "even" ? "Semaines paires" : "Chaque semaine"}${x.valid_from || x.valid_until ? `<small>${esc(x.valid_from || "Début d’année")} – ${esc(x.valid_until || "Fin d’année")}</small>` : ""}`,
               ...(admin ? [deleteButton("timetable_slots", x.id)] : []),
             ]),
         ),
-      )}<p class="empty">Créneaux récurrents par année scolaire ; les vacances et semaines alternées ne sont pas encore gérées.</p>`;
+      )}<p class="empty">Les semaines paires et impaires s’appuient sur la numérotation ISO. Les dates de validité permettent de limiter un créneau à une période de l’année scolaire ; les jours fériés et vacances sont à définir séparément.</p>`;
     case "attendance":
       return `${
         teaching

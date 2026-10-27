@@ -227,6 +227,9 @@ function seed(app, password) {
             start_time: start,
             end_time: end,
             room: "Salle " + (c + 1),
+            week_type: "all",
+            valid_from: "",
+            valid_until: "",
           });
           for (let e = 0; e < 2; e++) {
             const evaluation = save("evaluations", {
@@ -304,23 +307,21 @@ function seed(app, password) {
             ][m],
             due_on: "2026-11-02",
           });
-          classStudents
-            .slice(0, 5)
-            .forEach((student, j) =>
-              save("submissions", {
-                ...common,
-                homework: homework.id,
-                student: student.id,
-                answer: [
-                  "Ma réponse de démonstration.",
-                  "Voici les étapes de mon raisonnement.",
-                ][j % 2],
-                feedback:
-                  j % 2 === 0
-                    ? "Bon travail. Exemple de retour du professeur."
-                    : "",
-              }),
-            );
+          classStudents.slice(0, 5).forEach((student, j) =>
+            save("submissions", {
+              ...common,
+              homework: homework.id,
+              student: student.id,
+              answer: [
+                "Ma réponse de démonstration.",
+                "Voici les étapes de mon raisonnement.",
+              ][j % 2],
+              feedback:
+                j % 2 === 0
+                  ? "Bon travail. Exemple de retour du professeur."
+                  : "",
+            }),
+          );
           save("lesson_log", {
             ...common,
             assignment: assignment.id,

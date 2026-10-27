@@ -48,6 +48,10 @@ Le parent voit uniquement les enfants qui lui sont rattachés. Il peut consulter
 
 Les annonces sont filtrées selon leur public. Le tableau de bord signale les messages non lus. Les données se rechargent à l’ouverture d’un module ; il n’y a pas encore de notifications push.
 
+## Emploi du temps
+
+La direction peut définir des créneaux chaque semaine ou en alternance sur les semaines ISO paires et impaires. Une date de début et de fin peut limiter un créneau à une période de l’année scolaire. Les conflits de classe, d’enseignant ou de salle sont refusés uniquement lorsque les semaines et les périodes de validité se chevauchent. Les vacances et jours fériés doivent encore être gérés séparément.
+
 ## Bulletins et calculs
 
 Choisissez un élève et une période. Seules les évaluations **publiées** sont utilisées.

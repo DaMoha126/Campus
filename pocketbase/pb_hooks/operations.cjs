@@ -15,7 +15,16 @@ const fields = {
   homework: ["assignment", "title", "instructions", "due_on"],
   submissions: ["homework", "student", "answer", "feedback"],
   lesson_log: ["assignment", "held_on", "title", "content"],
-  timetable_slots: ["assignment", "weekday", "start_time", "end_time", "room"],
+  timetable_slots: [
+    "assignment",
+    "weekday",
+    "start_time",
+    "end_time",
+    "room",
+    "week_type",
+    "valid_from",
+    "valid_until",
+  ],
   attendance: [
     "assignment",
     "student",
@@ -33,6 +42,7 @@ const fields = {
   report_comments: ["period", "student", "comment"],
   school_audit: ["actor", "action", "entity", "record_id", "summary"],
 };
+const timetableOverlap = require(__hooks + "/timetable-rules.cjs");
 function forbid(message = "Accès refusé.") {
   throw new ForbiddenError(message);
 }
@@ -954,6 +964,28 @@ function action(app, auth, b) {
         if (start >= end) bad("Heures invalides.");
         const room =
           typeof data.room === "string" ? data.room.trim().slice(0, 100) : "";
+        const weekType = data.week_type || "all";
+        if (!["all", "odd", "even"].includes(weekType))
+          bad("Alternance de semaines invalide.");
+        const validFrom = data.valid_from ? day(data.valid_from) : "";
+        const validUntil = data.valid_until ? day(data.valid_until) : "";
+        if (validFrom && validUntil && validFrom > validUntil)
+          bad("La fin de validité doit suivre le début.");
+        const classroom = own(tx, "classes", as.getString("classroom"), a),
+          year = own(
+            tx,
+            "academic_years",
+            classroom.getString("academic_year_id"),
+            a,
+          );
+        if (
+          (validFrom && validFrom < year.getString("starts_on").slice(0, 10)) ||
+          (validFrom && validFrom > year.getString("ends_on").slice(0, 10)) ||
+          (validUntil &&
+            validUntil < year.getString("starts_on").slice(0, 10)) ||
+          (validUntil && validUntil > year.getString("ends_on").slice(0, 10))
+        )
+          bad("Validité hors de l’année scolaire de la classe.");
         const slots = tx.findRecordsByFilter(
           "timetable_slots",
           "school={:school} && weekday={:weekday}",
@@ -969,13 +1001,27 @@ function action(app, auth, b) {
             slot.getString("assignment"),
             a,
           );
-          const c = own(tx, "classes", as.getString("classroom"), a),
-            oc = own(tx, "classes", other.getString("classroom"), a);
+          const oc = own(tx, "classes", other.getString("classroom"), a),
+            overlaps = timetableOverlap(
+              {
+                week_type: weekType,
+                valid_from: validFrom,
+                valid_until: validUntil,
+                start_time: start,
+                end_time: end,
+              },
+              {
+                week_type: slot.getString("week_type"),
+                valid_from: slot.getString("valid_from"),
+                valid_until: slot.getString("valid_until"),
+                start_time: slot.getString("start_time"),
+                end_time: slot.getString("end_time"),
+              },
+            );
           if (
-            c.getString("academic_year_id") ===
+            classroom.getString("academic_year_id") ===
               oc.getString("academic_year_id") &&
-            start < slot.getString("end_time") &&
-            end > slot.getString("start_time") &&
+            overlaps &&
             (as.getString("teacher") === other.getString("teacher") ||
               as.getString("classroom") === other.getString("classroom") ||
               (room &&
@@ -990,6 +1036,9 @@ function action(app, auth, b) {
           start_time: start,
           end_time: end,
           room,
+          week_type: weekType,
+          valid_from: validFrom,
+          valid_until: validUntil,
         });
         break;
       }
