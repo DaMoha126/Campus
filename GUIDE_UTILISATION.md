@@ -52,6 +52,8 @@ Les annonces sont filtrées selon leur public. Le tableau de bord signale les me
 
 La direction peut définir des créneaux chaque semaine ou en alternance sur les semaines ISO paires et impaires. Une date de début et de fin peut limiter un créneau à une période de l’année scolaire. Les conflits de classe, d’enseignant ou de salle sont refusés uniquement lorsque les semaines et les périodes de validité se chevauchent. Les vacances et jours fériés doivent encore être gérés séparément.
 
+La vue par classe présente les cours sous forme de semaine et permet d’imprimer un emploi du temps en paysage. Dans « Personnaliser les documents », choisissez les couleurs, le sous-titre et le logo HTTPS ; vous pouvez aussi afficher ou masquer la salle et l’enseignant. La présentation est mémorisée dans le navigateur utilisé.
+
 ## Bulletins et calculs
 
 Choisissez un élève et une période. Seules les évaluations **publiées** sont utilisées.
@@ -65,6 +67,8 @@ Choisissez un élève et une période. Seules les évaluations **publiées** son
 - Les notes des classes précédentes enregistrées dans l’historique de l’année restent prises en compte. Le coefficient de l’affectation de la classe actuelle est retenu s’il existe pour cette matière.
 
 L’administration peut ajouter une appréciation générale. Le bouton d’impression permet de sortir le bulletin sur papier ou en PDF via le navigateur. Il s’agit d’un document interne, sans signature électronique ni modèle réglementaire national certifié.
+
+Les bulletins imprimables affichent les résultats par matière, l’identifiant de l’élève, la moyenne générale et, selon vos réglages, le rang, la mention et l’appréciation. Les couleurs, le sous-titre et le logo sont personnalisables dans le panneau « Personnaliser les documents » ; ces réglages sont conservés dans le navigateur.
 
 La direction peut clôturer une période scolaire après sa date de fin depuis Organisation pédagogique. Une période clôturée bloque la création d’évaluations, la saisie et la correction des notes ainsi que leur publication. La direction peut la rouvrir pour effectuer une correction ; elle doit être rouverte avant suppression. Les appréciations générales restent modifiables après clôture.
 

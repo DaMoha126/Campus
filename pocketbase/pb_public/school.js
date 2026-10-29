@@ -2,7 +2,8 @@ let schoolData = null,
   schoolPage = "overview",
   schoolEval = "",
   reportStudent = "",
-  reportPeriod = "";
+  reportPeriod = "",
+  timetableClass = "";
 const schoolLabels = {
   overview: "Tableau de bord",
   classes: "Classes",
@@ -37,6 +38,32 @@ const opForm = (op, html, label = "Enregistrer") =>
   `<form data-operation="${op}">${html}<button type="submit">${label}</button></form>`;
 const panel = (title, html) =>
   `<section class="panel"><h2>${title}</h2>${html}</section>`;
+const documentPreferencesKey = (d) => `etudia:documents:${d.school.id}`;
+function documentPreferences(d) {
+  const defaults = {
+    accent: "#3156a6",
+    ink: "#203252",
+    subtitle: "",
+    logo: "",
+    showTeacher: true,
+    showRoom: true,
+    showRank: true,
+    showMention: true,
+    showComment: true,
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem(documentPreferencesKey(d)) || "{}");
+    return { ...defaults, ...saved };
+  } catch {
+    return defaults;
+  }
+}
+const documentTheme = (p) => `--document-accent:${/^#[0-9a-f]{6}$/i.test(p.accent) ? p.accent : "#3156a6"};--document-ink:${/^#[0-9a-f]{6}$/i.test(p.ink) ? p.ink : "#203252"}`;
+const documentHeader = (d, p, title, subtitle = "") => `<header class="document-header" style="${documentTheme(p)}">${p.logo && /^https:\/\//i.test(p.logo) ? `<img src="${esc(p.logo)}" alt="Logo de l’établissement">` : ""}<div><p class="document-school">${esc(d.school.name)}</p><h2>${esc(title)}</h2><p>${esc(subtitle)}</p>${p.subtitle ? `<small class="document-custom-subtitle">${esc(p.subtitle)}</small>` : ""}</div><span class="document-stamp">${esc(today())}</span></header>`;
+const documentSettingsPanel = (d) => {
+  const p = documentPreferences(d);
+  return panel("Personnaliser les documents", `<p>Ces réglages s’appliquent aux emplois du temps et aux bulletins sur cet appareil.</p><form id="document-preferences"><div class="document-settings-grid"><label>Couleur principale<input name="accent" type="color" value="${esc(p.accent)}"></label><label>Couleur du texte<input name="ink" type="color" value="${esc(p.ink)}"></label><label class="settings-wide">Sous-titre / année à afficher<input name="subtitle" maxlength="100" value="${esc(p.subtitle)}" placeholder="Ex. Année scolaire 2026–2027"></label><label class="settings-wide">Logo (adresse HTTPS, facultatif)<input name="logo" type="url" maxlength="500" value="${esc(p.logo)}" placeholder="https://..."></label><label class="settings-check"><input name="showTeacher" type="checkbox" ${p.showTeacher ? "checked" : ""}> Afficher l’enseignant dans l’emploi du temps</label><label class="settings-check"><input name="showRoom" type="checkbox" ${p.showRoom ? "checked" : ""}> Afficher la salle dans l’emploi du temps</label><label class="settings-check"><input name="showRank" type="checkbox" ${p.showRank ? "checked" : ""}> Afficher le rang dans les bulletins</label><label class="settings-check"><input name="showMention" type="checkbox" ${p.showMention ? "checked" : ""}> Afficher la mention dans les bulletins</label><label class="settings-check"><input name="showComment" type="checkbox" ${p.showComment ? "checked" : ""}> Afficher l’appréciation dans les bulletins</label></div><button type="submit">Enregistrer la présentation</button></form>`);
+};
 const table = (headers, rows) =>
   rows.length
     ? `<div class="table-wrap"><table><thead><tr>${headers.map((x) => `<th>${x}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((x) => `<td>${x}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
@@ -748,6 +775,41 @@ function schoolScreen(d) {
         )
         .join("")}`;
     case "timetable":
+      {
+        const preferences = documentPreferences(d),
+          scheduledClasses = d.classes.filter((classroom) =>
+            d.timetable.some((slot) =>
+              d.assignments.some(
+                (assignment) =>
+                  assignment.id === slot.assignment &&
+                  assignment.classroom === classroom.id,
+              ),
+            ),
+          );
+        if (!scheduledClasses.some((x) => x.id === timetableClass))
+          timetableClass = scheduledClasses[0]?.id || "";
+        const slots = d.timetable
+            .filter((slot) =>
+              d.assignments.some(
+                (assignment) =>
+                  assignment.id === slot.assignment &&
+                  assignment.classroom === timetableClass,
+              ),
+            )
+            .sort((a, b) => a.start_time.localeCompare(b.start_time)),
+          className = scheduledClasses.find((x) => x.id === timetableClass)?.name || "Classe";
+        const dayNames = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
+        const dayCards = dayNames.map((day, index) => {
+          const lessons = slots.filter((x) => x.weekday === index + 1);
+          return `<section class="timetable-day"><h3>${day}</h3>${lessons.length ? lessons.map((x) => {
+            const assignment = d.assignments.find((a) => a.id === x.assignment),
+              subject = d.subjects.find((s) => s.id === assignment?.subject)?.name || "Cours",
+              teacherName = person(d, assignment?.teacher),
+              rhythm = x.week_type === "odd" ? "Semaines impaires" : x.week_type === "even" ? "Semaines paires" : "Chaque semaine",
+              range = x.valid_from || x.valid_until ? `${x.valid_from || "Début"} – ${x.valid_until || "Fin"}` : "Toute l’année";
+            return `<article class="timetable-lesson" style="${documentTheme(preferences)}"><strong>${esc(x.start_time)} – ${esc(x.end_time)}</strong><b>${esc(subject)}</b><span>${esc(className)}${preferences.showTeacher ? ` · ${esc(teacherName)}` : ""}${preferences.showRoom && x.room ? ` · Salle ${esc(x.room)}` : ""}</span><small>${rhythm} · ${esc(range)}</small></article>`;
+          }).join("") : '<p class="empty">Aucun cours prévu.</p>'}</section>`;
+        }).join("");
       return `${
         admin
           ? panel(
@@ -787,49 +849,8 @@ function schoolScreen(d) {
               ),
             )
           : ""
-      }${panel(
-        "Emploi du temps hebdomadaire",
-        table(
-          [
-            "Jour",
-            "Heure",
-            "Classe / matière",
-            "Enseignant",
-            "Salle",
-            "Rythme / validité",
-            ...(admin ? ["Action"] : []),
-          ],
-          d.timetable
-            .slice()
-            .sort(
-              (a, b) =>
-                a.weekday - b.weekday ||
-                a.start_time.localeCompare(b.start_time),
-            )
-            .map((x) => [
-              [
-                "Lundi",
-                "Mardi",
-                "Mercredi",
-                "Jeudi",
-                "Vendredi",
-                "Samedi",
-                "Dimanche",
-              ][x.weekday - 1],
-              `${x.start_time}–${x.end_time}`,
-              esc(titleOf(d, x.assignment)),
-              esc(
-                person(
-                  d,
-                  d.assignments.find((a) => a.id === x.assignment)?.teacher,
-                ),
-              ),
-              esc(x.room),
-              `${x.week_type === "odd" ? "Semaines impaires" : x.week_type === "even" ? "Semaines paires" : "Chaque semaine"}${x.valid_from || x.valid_until ? `<small>${esc(x.valid_from || "Début d’année")} – ${esc(x.valid_until || "Fin d’année")}</small>` : ""}`,
-              ...(admin ? [deleteButton("timetable_slots", x.id)] : []),
-            ]),
-        ),
-      )}<p class="empty">Les semaines paires et impaires s’appuient sur la numérotation ISO. Les dates de validité permettent de limiter un créneau à une période de l’année scolaire ; les jours fériés et vacances sont à définir séparément.</p>`;
+      }${panel("Emploi du temps de la classe", `<div class="document-controls"><label>Classe<select id="timetable-class">${options(scheduledClasses, (x) => x.id, (x) => schoolClassLabel(d, x), timetableClass)}</select></label><button id="print-timetable">Imprimer l’emploi du temps</button></div><section id="timetable-printable" class="printable-document timetable-printable" style="${documentTheme(preferences)}">${documentHeader(d, preferences, "Emploi du temps", `${className} · ${d.years.find((y) => y.id === scheduledClasses.find((x) => x.id === timetableClass)?.academic_year_id)?.label || ""}`)}<div class="timetable-grid">${dayCards}</div></section><p class="empty">Les semaines paires et impaires suivent la numérotation ISO. Les périodes de validité sont indiquées pour chaque cours ; les vacances et jours fériés restent à gérer séparément.</p>${admin ? panel("Créneaux à gérer", table(["Jour", "Heure", "Classe / matière", "Enseignant", "Salle", "Rythme / validité", "Action"], slots.map((x) => [dayNames[x.weekday - 1], `${x.start_time}–${x.end_time}`, esc(titleOf(d, x.assignment)), esc(person(d, d.assignments.find((a) => a.id === x.assignment)?.teacher)), esc(x.room), `${x.week_type === "odd" ? "Semaines impaires" : x.week_type === "even" ? "Semaines paires" : "Chaque semaine"}${x.valid_from || x.valid_until ? `<small>${esc(x.valid_from || "Début d’année")} – ${esc(x.valid_until || "Fin d’année")}</small>` : ""}`, deleteButton("timetable_slots", x.id)]))) : ""}`)}${documentSettingsPanel(d)}`;
+      }
     case "attendance":
       return `${
         teaching
@@ -1256,6 +1277,9 @@ function reportScreen(d) {
     d.reportComments.find(
       (x) => x.student === reportStudent && x.period === reportPeriod,
     )?.comment || "";
+  const preferences = documentPreferences(d),
+    rankInfo = preferences.showRank ? `<article><span>Rang</span><strong>${esc(rankLabel)}</strong></article>` : "",
+    mentionInfo = preferences.showMention ? `<article><span>Mention</span><strong>${esc(mention)}</strong></article>` : "";
   return `<div class="grid">${panel(
     "Choisir le bulletin",
     `<label>Élève<select id="report-student">${options(students, (x) => x.id, fullName, reportStudent)}</select></label><label>Période<select id="report-period">${options(
@@ -1264,7 +1288,7 @@ function reportScreen(d) {
       (x) => x.label + " · " + d.years.find((y) => y.id === x.year)?.label,
       reportPeriod,
     )}</select></label><button id="print-report">Imprimer le bulletin</button>`,
-  )}${d.permissions?.schoolLife && en ? panel("Appréciation générale", opForm("report-comment", hidden("student", reportStudent) + hidden("period", reportPeriod) + area("comment", "Appréciation", 4000))) : ""}</div><section class="panel" id="school-report"><h2>${esc(d.school.name)} · Bulletin</h2><p>${esc(person(d, reportStudent))} · ${esc(d.classes.find((c) => c.id === en?.class_id)?.name || "Non inscrit")} · ${esc(period?.label || "Période non définie")}</p>${table(
+  )}${d.permissions?.schoolLife && en ? panel("Appréciation générale", opForm("report-comment", hidden("student", reportStudent) + hidden("period", reportPeriod) + area("comment", "Appréciation", 4000))) : ""}${documentSettingsPanel(d)}</div><section class="printable-document report-printable" id="school-report" style="${documentTheme(preferences)}">${documentHeader(d, preferences, "Bulletin scolaire", `${period?.label || "Période non définie"} · ${d.years.find((y) => y.id === period?.year)?.label || ""}`)}<div class="report-student-card"><div><span>Élève</span><strong>${esc(person(d, reportStudent))}</strong></div><div><span>Classe</span><strong>${esc(d.classes.find((c) => c.id === en?.class_id)?.name || "Non inscrit")}</strong></div><div><span>Identifiant</span><strong>${esc(d.people.find((x) => x.id === reportStudent)?.login_id || "—")}</strong></div></div><h3 class="document-section-title">Résultats par matière</h3>${table(
     ["Matière", "Notes prises en compte", "Coefficient", "Moyenne /20"],
     [...groups].map(([subject, g]) => [
       esc(d.subjects.find((s) => s.id === subject)?.name),
@@ -1272,7 +1296,7 @@ function reportScreen(d) {
       g.coefficient,
       g.average === null ? "—" : g.average.toFixed(2),
     ]),
-  )}<h3>Moyenne générale : ${general} /20</h3><p><strong>Rang :</strong> ${esc(rankLabel)} · <strong>Mention :</strong> ${esc(mention)}</p><p class="prewrap">${esc(comment)}</p><p class="empty">Rang calculé à partir des moyennes générales des élèves ayant au moins une note publiée dans la classe. À égalité, les élèves partagent le même rang. Les absences et dispenses sont exclues. Ce bulletin est un document interne de l’établissement.</p></section>`;
+  )}<div class="report-summary"><article><span>Moyenne générale</span><strong>${general} <small>/20</small></strong></article>${rankInfo}${mentionInfo}</div>${preferences.showComment ? `<section class="report-comment"><h3>Appréciation générale</h3><p class="prewrap">${esc(comment || "Aucune appréciation renseignée.")}</p></section>` : ""}<div class="report-signatures"><div>Le / La responsable légal(e)<span></span></div><div>La direction<span></span></div></div><p class="document-footnote">Bulletin établi par ${esc(d.school.name)}. Les absences et dispenses sont exclues du calcul des moyennes.</p></section>`;
 }
 document.addEventListener("click", async (event) => {
   const openClass = event.target.closest("[data-open-class]");
@@ -1357,16 +1381,26 @@ document.addEventListener("click", async (event) => {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  if (event.target.closest("#print-report")) {
-    document.querySelector("#payment-receipt")?.remove();
-    const el = document.createElement("section");
-    el.id = "payment-receipt";
-    el.innerHTML = document.querySelector("#school-report").innerHTML;
+  const printButton = event.target.closest("#print-report, #print-timetable");
+  if (printButton) {
+    const source = document.querySelector(
+        printButton.id === "print-report" ? "#school-report" : "#timetable-printable",
+      ),
+      el = document.createElement("section");
+    document.querySelector("#school-printout")?.remove();
+    el.id = "school-printout";
+    el.className = printButton.id === "print-timetable" ? "is-timetable" : "";
+    el.append(source.cloneNode(true));
     document.body.append(el);
     window.print();
   }
 });
 document.addEventListener("change", async (event) => {
+  if (event.target.id === "timetable-class") {
+    timetableClass = event.target.value;
+    await schoolWorkspace();
+    return;
+  }
   if (
     event.target.name === "assignment" &&
     event.target.closest('form[data-operation="evaluation"]')
@@ -1421,6 +1455,30 @@ document.addEventListener("change", async (event) => {
 document.addEventListener("submit", async (event) => {
   const form = event.target,
     operation = form.dataset.operation;
+  if (form.id === "document-preferences") {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(form)),
+      logo = String(data.logo || "").trim();
+    if (logo && !/^https:\/\//i.test(logo)) {
+      notify("Le logo doit utiliser une adresse HTTPS.");
+      return;
+    }
+    const preferences = {
+      accent: /^#[0-9a-f]{6}$/i.test(data.accent) ? data.accent : "#3156a6",
+      ink: /^#[0-9a-f]{6}$/i.test(data.ink) ? data.ink : "#203252",
+      subtitle: String(data.subtitle || "").trim().slice(0, 100),
+      logo,
+      showTeacher: form.elements.showTeacher.checked,
+      showRoom: form.elements.showRoom.checked,
+      showRank: form.elements.showRank.checked,
+      showMention: form.elements.showMention.checked,
+      showComment: form.elements.showComment.checked,
+    };
+    localStorage.setItem(documentPreferencesKey(schoolData), JSON.stringify(preferences));
+    await schoolWorkspace();
+    notify("Présentation des documents enregistrée sur cet appareil.");
+    return;
+  }
   if (!operation) return;
   event.preventDefault();
   const button = form.querySelector("[type=submit]");

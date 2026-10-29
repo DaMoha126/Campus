@@ -223,6 +223,38 @@ test(
       await form.locator("[type=submit]").click();
       await page.getByText("08:00–09:00", { exact: true }).waitFor();
       await page.getByText("Semaines impaires", { exact: true }).waitFor();
+      assert.match(
+        await page.locator("#timetable-printable").innerText(),
+        /Mathématiques.*Salle A/s,
+      );
+      await page
+        .getByRole("button", { name: "Imprimer l’emploi du temps", exact: true })
+        .click();
+      assert.match(
+        await page.locator("#school-printout").innerText(),
+        /Emploi du temps.*Lundi.*Mathématiques/s,
+      );
+      let preferences = page.locator("#document-preferences");
+      await preferences
+        .locator('[name="accent"]')
+        .evaluate((input) => (input.value = "#0f766e"));
+      await preferences
+        .locator('[name="subtitle"]')
+        .fill("Année scolaire 2026–2027");
+      await preferences.locator('[type="submit"]').click();
+      await page
+        .getByText("Présentation des documents enregistrée sur cet appareil.", {
+          exact: true,
+        })
+        .waitFor();
+      assert.equal(
+        await page.locator("#timetable-printable").getAttribute("style").then((x) => x.includes("#0f766e")),
+        true,
+      );
+      assert.match(
+        await page.locator("#timetable-printable").innerText(),
+        /Année scolaire 2026–2027/,
+      );
       form = page.locator("form[data-operation=timetable]");
       await form.locator("[name=start_time]").fill("08:30");
       await form.locator("[name=end_time]").fill("09:30");
@@ -251,18 +283,27 @@ test(
       await page
         .getByRole("button", { name: "Bulletins", exact: true })
         .click();
-      await page
-        .getByText("Moyenne générale : 18.00 /20", { exact: true })
-        .waitFor();
-      await page.getByText(/Rang : 1er sur 1 élève classé/).waitFor();
-      await page.getByText(/Mention : Excellent/).waitFor();
+      await page.locator("#school-report .report-summary").waitFor();
+      assert.match(
+        await page.locator("#school-report .report-summary").innerText(),
+        /Moyenne générale[\s\S]*18\.00[\s\S]*Rang[\s\S]*1er sur 1 élève classé[\s\S]*Mention[\s\S]*Excellent/,
+      );
       await page
         .getByRole("button", { name: "Imprimer le bulletin", exact: true })
         .click();
       assert.match(
-        await page.locator("#payment-receipt").textContent(),
+        await page.locator("#school-printout").textContent(),
         /18.00/,
       );
+      preferences = page.locator("#document-preferences");
+      await preferences.locator('[name="showRank"]').uncheck();
+      await preferences.locator('[type="submit"]').click();
+      await page
+        .getByText("Présentation des documents enregistrée sur cet appareil.", {
+          exact: true,
+        })
+        .waitFor();
+      assert.doesNotMatch(await page.locator("#school-report").innerText(), /Rang/);
       const french = ok(await f.state(admin)).subjects.find(
         (x) => x.name === "Français",
       );
