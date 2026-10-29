@@ -799,19 +799,25 @@ function schoolScreen(d) {
             .sort((a, b) => a.start_time.localeCompare(b.start_time)),
           className = scheduledClasses.find((x) => x.id === timetableClass)?.name || "Classe";
         const dayNames = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"];
-        const dayCards = dayNames.map((day, index) => {
-          const lessons = slots.filter((x) => x.weekday === index + 1);
-          return `<section class="timetable-day"><h3>${day}</h3>${lessons.length ? lessons.map((x) => {
+        const minutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3)),
+          firstMinute = Math.floor(Math.min(420, ...slots.map((x) => minutes(x.start_time))) / 60) * 60,
+          lastMinute = Math.ceil(Math.max(1080, ...slots.map((x) => minutes(x.end_time))) / 60) * 60,
+          duration = lastMinute - firstMinute,
+          visibleDays = dayNames.filter((_, i) => i < 5 || slots.some((x) => x.weekday === i + 1)),
+          ticks = Array.from({ length: (lastMinute - firstMinute) / 60 }, (_, i) => `<span style="top:${i * 60}px">${String((firstMinute / 60) + i).padStart(2, "0")}:00</span>`).join("");
+        const dayCards = visibleDays.map((day) => {
+          const index = dayNames.indexOf(day), lessons = slots.filter((x) => x.weekday === index + 1);
+          return `<section class="schedule-column"><h3>${day}</h3><div class="schedule-day" style="grid-template-rows:repeat(${duration},1px)">${lessons.map((x) => {
             const assignment = d.assignments.find((a) => a.id === x.assignment),
               subject = d.subjects.find((s) => s.id === assignment?.subject)?.name || "Cours",
-              teacherName = person(d, assignment?.teacher),
-              rhythm = x.week_type === "odd" ? "Semaines impaires" : x.week_type === "even" ? "Semaines paires" : "Chaque semaine",
-              range = x.valid_from || x.valid_until ? `${x.valid_from || "Début"} – ${x.valid_until || "Fin"}` : "Toute l’année";
-            return `<article class="timetable-lesson" style="${documentTheme(preferences)}"><strong>${esc(x.start_time)} – ${esc(x.end_time)}</strong><b>${esc(subject)}</b><span>${esc(className)}${preferences.showTeacher ? ` · ${esc(teacherName)}` : ""}${preferences.showRoom && x.room ? ` · Salle ${esc(x.room)}` : ""}</span><small>${rhythm} · ${esc(range)}</small></article>`;
-          }).join("") : '<p class="empty">Aucun cours prévu.</p>'}</section>`;
+              hue = [...(assignment?.subject || "")].reduce((n, c) => n + c.charCodeAt(0), 0) % 360,
+              rhythm = x.week_type === "odd" ? "S. impaires" : x.week_type === "even" ? "S. paires" : "",
+              range = x.valid_from || x.valid_until ? `${x.valid_from || "Début"} – ${x.valid_until || "Fin"}` : "";
+            return `<article class="schedule-course" style="grid-row:${minutes(x.start_time) - firstMinute + 1} / ${minutes(x.end_time) - firstMinute + 1};--course-hue:${hue}" title="${esc(subject + " · " + x.start_time + "–" + x.end_time + " · " + person(d, assignment?.teacher) + " · " + (x.room || "") + " · " + rhythm + " " + range)}"><span class="course-time">${esc(x.start_time)}–${esc(x.end_time)}</span><strong>${esc(subject)}</strong>${preferences.showTeacher ? `<span>${esc(person(d, assignment?.teacher))}</span>` : ""}${preferences.showRoom && x.room ? `<span>${esc(x.room)}</span>` : ""}${rhythm ? `<small>${rhythm}</small>` : ""}${range ? `<small>${esc(range)}</small>` : ""}</article>`;
+          }).join("")}</div></section>`;
         }).join("");
-      return `${
-        admin
+        const scheduleGrid = `<div class="schedule-scroll"><div class="schedule-board" style="--day-count:${visibleDays.length}"><div class="schedule-clock"><h3>Heures</h3><div style="height:${duration}px">${ticks}</div></div>${dayCards}</div></div>`;
+      return `${panel("Emploi du temps de la classe", `<div class="document-controls"><label>Classe<select id="timetable-class">${options(scheduledClasses, (x) => x.id, (x) => schoolClassLabel(d, x), timetableClass)}</select></label><button id="print-timetable">Imprimer l’emploi du temps</button></div><section id="timetable-printable" class="printable-document timetable-printable" style="${documentTheme(preferences)}">${documentHeader(d, preferences, "Emploi du temps", `${className} · ${d.years.find((y) => y.id === scheduledClasses.find((x) => x.id === timetableClass)?.academic_year_id)?.label || ""}`)}${scheduleGrid}</section><p class="empty">Les semaines paires et impaires suivent la numérotation ISO. Les périodes de validité sont indiquées pour chaque cours ; les vacances et jours fériés restent à gérer séparément.</p>${admin ? panel("Créneaux à gérer", table(["Jour", "Heure", "Classe / matière", "Enseignant", "Salle", "Rythme / validité", "Action"], slots.map((x) => [dayNames[x.weekday - 1], `${x.start_time}–${x.end_time}`, esc(titleOf(d, x.assignment)), esc(person(d, d.assignments.find((a) => a.id === x.assignment)?.teacher)), esc(x.room), `${x.week_type === "odd" ? "Semaines impaires" : x.week_type === "even" ? "Semaines paires" : "Chaque semaine"}${x.valid_from || x.valid_until ? `<small>${esc(x.valid_from || "Début d’année")} – ${esc(x.valid_until || "Fin d’année")}</small>` : ""}`, deleteButton("timetable_slots", x.id)]))) : ""}`)}${admin ? `<details class="schedule-tools"><summary>Ajouter un cours</summary>${admin
           ? panel(
               "Ajouter un créneau hebdomadaire",
               opForm(
@@ -848,8 +854,7 @@ function schoolScreen(d) {
                   '<label>Salle (facultative)<input name="room" maxlength="100"></label><label>Valide à partir du (facultatif)<input name="valid_from" type="date"></label><label>Valide jusqu’au (facultatif)<input name="valid_until" type="date"></label>',
               ),
             )
-          : ""
-      }${panel("Emploi du temps de la classe", `<div class="document-controls"><label>Classe<select id="timetable-class">${options(scheduledClasses, (x) => x.id, (x) => schoolClassLabel(d, x), timetableClass)}</select></label><button id="print-timetable">Imprimer l’emploi du temps</button></div><section id="timetable-printable" class="printable-document timetable-printable" style="${documentTheme(preferences)}">${documentHeader(d, preferences, "Emploi du temps", `${className} · ${d.years.find((y) => y.id === scheduledClasses.find((x) => x.id === timetableClass)?.academic_year_id)?.label || ""}`)}<div class="timetable-grid">${dayCards}</div></section><p class="empty">Les semaines paires et impaires suivent la numérotation ISO. Les périodes de validité sont indiquées pour chaque cours ; les vacances et jours fériés restent à gérer séparément.</p>${admin ? panel("Créneaux à gérer", table(["Jour", "Heure", "Classe / matière", "Enseignant", "Salle", "Rythme / validité", "Action"], slots.map((x) => [dayNames[x.weekday - 1], `${x.start_time}–${x.end_time}`, esc(titleOf(d, x.assignment)), esc(person(d, d.assignments.find((a) => a.id === x.assignment)?.teacher)), esc(x.room), `${x.week_type === "odd" ? "Semaines impaires" : x.week_type === "even" ? "Semaines paires" : "Chaque semaine"}${x.valid_from || x.valid_until ? `<small>${esc(x.valid_from || "Début d’année")} – ${esc(x.valid_until || "Fin d’année")}</small>` : ""}`, deleteButton("timetable_slots", x.id)]))) : ""}`)}${documentSettingsPanel(d)}`;
+          : ""}</details>` : ""}<details class="schedule-tools"><summary>Personnaliser la présentation</summary>${documentSettingsPanel(d)}</details>`;
       }
     case "attendance":
       return `${

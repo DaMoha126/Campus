@@ -214,6 +214,7 @@ test(
       await page
         .getByRole("button", { name: "Emploi du temps", exact: true })
         .click();
+      await page.locator("details").filter({ has: page.locator("form[data-operation=timetable]") }).evaluate((el) => (el.open = true));
       form = page.locator("form[data-operation=timetable]");
       await form.locator("[name=weekday]").selectOption("1");
       await form.locator("[name=start_time]").fill("08:00");
@@ -234,6 +235,7 @@ test(
         await page.locator("#school-printout").innerText(),
         /Emploi du temps.*Lundi.*Mathématiques/s,
       );
+      await page.locator("details").filter({ has: page.locator("#document-preferences") }).evaluate((el) => (el.open = true));
       let preferences = page.locator("#document-preferences");
       await preferences
         .locator('[name="accent"]')
@@ -255,6 +257,7 @@ test(
         await page.locator("#timetable-printable").innerText(),
         /Année scolaire 2026–2027/,
       );
+      await page.locator("details").filter({ has: page.locator("form[data-operation=timetable]") }).evaluate((el) => (el.open = true));
       form = page.locator("form[data-operation=timetable]");
       await form.locator("[name=start_time]").fill("08:30");
       await form.locator("[name=end_time]").fill("09:30");

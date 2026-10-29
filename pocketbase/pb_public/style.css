@@ -663,3 +663,27 @@ td form textarea {
     -webkit-print-color-adjust: exact;
   }
 }
+
+/* Weekly planner: a shared time axis preserves gaps and lesson duration. */
+.timetable-printable { padding: 20px; }
+.schedule-scroll { overflow-x: auto; margin-top: 22px; }
+.schedule-board { display: grid; grid-template-columns: 58px repeat(var(--day-count), minmax(140px, 1fr)); min-width: 820px; border: 1px solid #dfe5ee; border-radius: 12px; overflow: hidden; background: #fff; }
+.schedule-column { min-width: 0; border-left: 1px solid #e4e9f1; }
+.schedule-board h3 { display: flex; align-items: center; justify-content: center; height: 42px; margin: 0; font-size: 12px; font-weight: 750; color: #46556e; background: #f8faff; border-bottom: 1px solid #dfe5ee; }
+.schedule-clock > div { position: relative; background: #f8faff; }
+.schedule-clock span { position: absolute; left: 8px; font-size: 11px; color: #74829a; line-height: 20px; }
+.schedule-day { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0,1fr); column-gap: 2px; background: repeating-linear-gradient(to bottom, transparent 0px, transparent 29px, #edf1f7 29px, #edf1f7 30px, transparent 30px, transparent 59px, #dce4ef 59px, #dce4ef 60px); }
+.schedule-course { min-width: 0; overflow: hidden; margin: 2px 3px; padding: 7px 8px; display: flex; flex-direction: column; gap: 2px; background: hsl(var(--course-hue) 65% 95%); border: 1px solid hsl(var(--course-hue) 40% 85%); border-left: 4px solid hsl(var(--course-hue) 55% 43%); border-radius: 6px; color: #34405a; font-size: 10px; line-height: 1.3; }
+.schedule-course strong { font-size: 12px; color: #1d2c43; }
+.schedule-course .course-time { font-size: 10px; font-weight: 700; color: hsl(var(--course-hue) 50% 30%); }
+.schedule-course small { font-size: 9px; font-weight: 650; }
+.schedule-tools { margin: 18px 0; border: 1px solid #e2e7f0; border-radius: 12px; background: #fff; }
+.schedule-tools > summary { cursor: pointer; padding: 16px 20px; font-weight: 650; color: #405272; }
+.schedule-tools > .panel { border: 0; margin: 0; }
+@media print {
+  #school-printout .schedule-scroll { overflow: visible; }
+  #school-printout .schedule-board { min-width: 0; zoom: .78; }
+  #school-printout .schedule-course { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}
+.document-header { background: transparent; color: var(--document-ink, #203252); padding: 0 0 20px; }
+.document-header > .document-stamp { color: #65728a; }
