@@ -1434,7 +1434,9 @@ document.addEventListener("click", async (event) => {
     document.querySelector("#school-printout")?.remove();
     el.id = "school-printout";
     el.className = printButton.id === "print-timetable" ? "is-timetable" : "";
-    el.append(source.cloneNode(true));
+    const copy = source.cloneNode(true);
+    copy.removeAttribute("id");
+    el.append(copy);
     document.body.append(el);
     window.print();
   }
