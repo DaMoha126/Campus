@@ -286,7 +286,7 @@ test(
             admin.periods.find((x) => x.label === "Trimestre 1").id,
           );
         await page
-          .getByText("Moyenne générale : 16.00 /20", { exact: true })
+          .locator("#school-report .report-summary article").filter({ hasText: "Moyenne générale" }).getByText("16.00 /20", { exact: true })
           .waitFor();
         await browser.close();
         browser = null;

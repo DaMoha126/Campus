@@ -222,7 +222,7 @@ test(
       await form.locator("[name=room]").fill("Salle A");
       await form.locator("[name=week_type]").selectOption("odd");
       await form.locator("[type=submit]").click();
-      await page.getByText("08:00–09:00", { exact: true }).waitFor();
+      await page.locator("#timetable-printable").getByText("08:00–09:00", { exact: true }).waitFor();
       await page.getByText("Semaines impaires", { exact: true }).waitFor();
       assert.match(
         await page.locator("#timetable-printable").innerText(),
