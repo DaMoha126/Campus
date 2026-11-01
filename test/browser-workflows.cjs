@@ -665,7 +665,7 @@ test(
         .getByRole("button", { name: "Bulletins", exact: true })
         .click();
       await family
-        .getByText("Moyenne générale : 18.00 /20", { exact: true })
+        .locator("#school-report .report-summary article").filter({ hasText: "Moyenne générale" }).getByText("18.00 /20", { exact: true })
         .waitFor();
       assert.equal(await family.locator("[data-operation=grade]").count(), 0);
       await family
