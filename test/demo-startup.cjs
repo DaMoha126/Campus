@@ -200,7 +200,7 @@ test(
       await new Promise((r) => setTimeout(r, 3500));
       if (process.env.CHROME_BIN) {
         const { chromium } = require(
-          process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES + "/playwright",
+          process.env.ETUDIA_PLAYWRIGHT_MODULE || (process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES ? process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES + "/playwright" : "playwright"),
         );
         browser = await chromium.launch({
           executablePath: process.env.CHROME_BIN,

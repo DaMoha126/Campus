@@ -6,7 +6,7 @@ test(
   { skip: !process.env.POCKETBASE_BIN || !process.env.CHROME_BIN },
   async () => {
     const { chromium } = require(
-      process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES + "/playwright",
+      process.env.ETUDIA_PLAYWRIGHT_MODULE || (process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES ? process.env.CODEX_PRIMARY_RUNTIME_NODE_MODULES + "/playwright" : "playwright"),
     );
     const f = await fixture(31364);
     let browser;

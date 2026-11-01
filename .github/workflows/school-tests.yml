@@ -1,0 +1,62 @@
+name: Etudia integration and browser tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: school-tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install PocketBase (same version as Docker)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^ARG PB_VERSION=//p' Dockerfile)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/pocketbase"
+          cd "$RUNNER_TEMP/pocketbase"
+          archive="pocketbase_${version}_linux_amd64.zip"
+          curl --fail --location --retry 3 -o "$archive" "https://github.com/pocketbase/pocketbase/releases/download/v${version}/${archive}"
+          curl --fail --location --retry 3 -o checksums.txt "https://github.com/pocketbase/pocketbase/releases/download/v${version}/checksums.txt"
+          grep " ${archive}$" checksums.txt | sha256sum --check -
+          unzip "$archive" pocketbase
+          chmod +x pocketbase
+          echo "POCKETBASE_BIN=$PWD/pocketbase" >> "$GITHUB_ENV"
+      - name: Install Playwright and Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/browser-tools" --no-audit --no-fund playwright@1.56.1
+          "$RUNNER_TEMP/browser-tools/node_modules/.bin/playwright" install --with-deps chromium
+          module="$RUNNER_TEMP/browser-tools/node_modules/playwright"
+          echo "ETUDIA_PLAYWRIGHT_MODULE=$module" >> "$GITHUB_ENV"
+          chrome=$(node -e 'console.log(require(process.argv[1]).chromium.executablePath())' "$module")
+          test -x "$chrome"
+          echo "CHROME_BIN=$chrome" >> "$GITHUB_ENV"
+      - name: Run every test and reject skipped tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$POCKETBASE_BIN"
+          test -x "$CHROME_BIN"
+          node --test --test-reporter=tap 2>&1 | tee test-results.tap
+          if grep -q '# SKIP' test-results.tap; then
+            echo 'Tests were skipped: CI requires the full suite.' >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results.tap
+          if-no-files-found: ignore
