@@ -30,8 +30,8 @@ const titleOf = (d, id) => {
 const person = (d, id) => fullName(d.people.find((x) => x.id === id));
 const select = (name, label, items, id, nameOf, selected = "") =>
   `<label>${label}<select name="${name}" required>${options(items, id, nameOf, selected)}</select></label>`;
-const area = (name, label, max = 10000) =>
-  `<label>${label}<textarea name="${name}" maxlength="${max}" required rows="4"></textarea></label>`;
+const area = (name, label, max = 10000, value = "") =>
+  `<label>${label}<textarea name="${name}" maxlength="${max}" required rows="4">${esc(value)}</textarea></label>`;
 const hidden = (name, v) =>
   `<input type="hidden" name="${name}" value="${esc(v)}">`;
 const opForm = (op, html, label = "Enregistrer") =>
@@ -1293,7 +1293,7 @@ function reportScreen(d) {
       (x) => x.label + " · " + d.years.find((y) => y.id === x.year)?.label,
       reportPeriod,
     )}</select></label><button id="print-report">Imprimer le bulletin</button> ${d.permissions?.schoolLife && en ? '<button id="print-class-reports">Imprimer les bulletins de la classe</button>' : ""}`,
-  )}${d.permissions?.schoolLife && en ? panel("Appréciation générale", opForm("report-comment", hidden("student", reportStudent) + hidden("period", reportPeriod) + area("comment", "Appréciation", 4000))) : ""}${documentSettingsPanel(d)}</div><section class="printable-document report-printable" id="school-report" style="${documentTheme(preferences)}">${documentHeader(d, preferences, "Bulletin scolaire", `${period?.label || "Période non définie"} · ${d.years.find((y) => y.id === period?.year)?.label || ""}`)}<div class="report-student-card"><div><span>Élève</span><strong>${esc(person(d, reportStudent))}</strong></div><div><span>Classe</span><strong>${esc(d.classes.find((c) => c.id === en?.class_id)?.name || "Non inscrit")}</strong></div><div><span>Identifiant</span><strong>${esc(d.people.find((x) => x.id === reportStudent)?.login_id || "—")}</strong></div></div><h3 class="document-section-title">Résultats par matière</h3>${table(
+  )}${d.permissions?.schoolLife && en ? panel("Appréciation générale", opForm("report-comment", hidden("student", reportStudent) + hidden("period", reportPeriod) + area("comment", "Appréciation", 4000, comment))) : ""}${documentSettingsPanel(d)}</div><section class="printable-document report-printable" id="school-report" style="${documentTheme(preferences)}">${documentHeader(d, preferences, "Bulletin scolaire", `${period?.label || "Période non définie"} · ${d.years.find((y) => y.id === period?.year)?.label || ""}`)}<div class="report-student-card"><div><span>Élève</span><strong>${esc(person(d, reportStudent))}</strong></div><div><span>Classe</span><strong>${esc(d.classes.find((c) => c.id === en?.class_id)?.name || "Non inscrit")}</strong></div><div><span>Identifiant</span><strong>${esc(d.people.find((x) => x.id === reportStudent)?.login_id || "—")}</strong></div></div><h3 class="document-section-title">Résultats par matière</h3>${table(
     ["Matière", "Notes prises en compte", "Coefficient", "Moyenne /20"],
     [...groups].map(([subject, g]) => [
       esc(d.subjects.find((s) => s.id === subject)?.name),
@@ -1304,16 +1304,32 @@ function reportScreen(d) {
   )}<div class="report-summary"><article><span>Moyenne générale</span><strong>${general} <small>/20</small></strong></article>${rankInfo}${mentionInfo}</div>${preferences.showComment ? `<section class="report-comment"><h3>Appréciation générale</h3><p class="prewrap">${esc(comment || "Aucune appréciation renseignée.")}</p></section>` : ""}<div class="report-signatures"><div>Le / La responsable légal(e)<span></span></div><div>La direction<span></span></div></div><p class="document-footnote">Bulletin établi par ${esc(d.school.name)}. Les absences et dispenses sont exclues du calcul des moyennes.</p></section>`;
 }
 document.addEventListener("click", async (event) => {
+  const cancelSlotEdit = event.target.closest("[data-cancel-slot-edit]");
+  if (cancelSlotEdit) {
+    const form = cancelSlotEdit.closest('form[data-operation="timetable"]');
+    if (form.querySelector('[type="submit"]').disabled) return;
+    form.querySelector('[name="id"]')?.remove();
+    form.reset();
+    form.querySelector('[type="submit"]').textContent = "Enregistrer";
+    form.closest("section").querySelector("h2").textContent = "Ajouter un créneau hebdomadaire";
+    form.closest("details").querySelector("summary").textContent = "Ajouter un cours";
+    cancelSlotEdit.remove();
+    return;
+  }
   const editSlot = event.target.closest("[data-edit-slot]");
   if (editSlot) {
     const slot = schoolData.timetable.find((x) => x.id === editSlot.dataset.editSlot),
       form = document.querySelector('form[data-operation="timetable"]');
-    if (!slot || !form) return;
+    if (!slot || !form || form.querySelector('[type="submit"]').disabled) return;
     form.querySelector('[name="id"]')?.remove();
     form.insertAdjacentHTML("afterbegin", hidden("id", slot.id));
     for (const key of ["assignment", "weekday", "start_time", "end_time", "room", "week_type", "valid_from", "valid_until"])
       form.elements[key].value = slot[key] || (key === "week_type" ? "all" : "");
     form.querySelector('[type="submit"]').textContent = "Enregistrer les modifications";
+    if (!form.querySelector("[data-cancel-slot-edit]"))
+      form.insertAdjacentHTML("beforeend", '<button type="button" data-cancel-slot-edit>Annuler modification</button>');
+    form.closest("section").querySelector("h2").textContent = "Modifier le créneau";
+    form.closest("details").querySelector("summary").textContent = "Modifier un cours";
     form.closest("details").open = true;
     form.scrollIntoView({ block: "center", behavior: "smooth" });
     return;
@@ -1339,6 +1355,7 @@ document.addEventListener("click", async (event) => {
       }
     } finally { reportStudent = originalStudent; }
     document.querySelector("#school-printout")?.remove();
+    document.querySelector("#payment-receipt")?.remove();
     document.body.append(output);
     window.print();
     return;
@@ -1432,6 +1449,7 @@ document.addEventListener("click", async (event) => {
       ),
       el = document.createElement("section");
     document.querySelector("#school-printout")?.remove();
+    document.querySelector("#payment-receipt")?.remove();
     el.id = "school-printout";
     el.className = printButton.id === "print-timetable" ? "is-timetable" : "";
     const copy = source.cloneNode(true);

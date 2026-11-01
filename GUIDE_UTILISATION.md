@@ -107,3 +107,9 @@ L’administration dispose d’un accès direct **Classes** et **Notes** depuis 
 Dans **Notes & évaluations**, choisissez la classe, la matière et la période. Les notes sont regroupées par classe puis par matière, avec une ligne par élève et une colonne par évaluation. Les appréciations restent visibles sous chaque note. Les évaluations à publier et la saisie des notes suivent ces mêmes filtres. **Toutes les classes**, **Toutes les matières** et **Toutes les périodes** permettent d’élargir la vue. Chaque classe indique son année scolaire pour distinguer les années archivées.
 
 Depuis une fiche classe, **Consulter les notes de cette classe** ouvre directement les notes correspondantes. Les familles conservent uniquement leurs données autorisées et les évaluations publiées.
+
+## Modification et impression des documents
+
+Dans « Emploi du temps », utilisez « Modifier » sur un créneau existant. Le formulaire indique le mode modification ; « Annuler modification » revient à la création sans modifier le cours. Après une erreur, la saisie reste disponible pour correction. Les conflits de classe, professeur et salle continuent d’être contrôlés côté serveur.
+
+Dans « Bulletins », l’appréciation déjà enregistrée est reprise dans le formulaire. La direction et la scolarité peuvent imprimer les bulletins de la classe de l’élève sélectionné, pour la période choisie. Chaque bulletin commence sur une nouvelle page. Une impression scolaire remplace l’ancien reçu dans la zone d’impression, et inversement.

@@ -245,6 +245,7 @@ function printReceipt(id) {
   const d = latestData,
     p = d.payments.find((p) => p.id === id);
   if (!p) return;
+  document.querySelector("#school-printout")?.remove();
   document.querySelector("#payment-receipt")?.remove();
   const e = d.enrollments.find((e) => e.id === p.enrollment_id),
     el = document.createElement("section");

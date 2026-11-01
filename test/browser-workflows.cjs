@@ -235,6 +235,8 @@ test(
         await page.locator("#school-printout").innerText(),
         /Emploi du temps.*Lundi.*Mathématiques/s,
       );
+      assert.equal(await page.locator("#school-printout").count(), 1);
+      assert.equal(await page.locator("#payment-receipt").count(), 0, "An old receipt must not be included with the timetable");
       await page.locator("details").filter({ has: page.locator("#document-preferences") }).evaluate((el) => (el.open = true));
       let preferences = page.locator("#document-preferences");
       await preferences
@@ -265,7 +267,35 @@ test(
       await page
         .getByText("Conflit de classe, enseignant ou salle.", { exact: true })
         .waitFor();
-      assert.equal(ok(await f.state(admin)).timetable.length, 1);
+      const initialSlot = ok(await f.state(admin)).timetable[0];
+      await page.locator(`[data-edit-slot="${initialSlot.id}"]`).click();
+      form = page.locator("form[data-operation=timetable]");
+      assert.equal(await form.locator('[name="id"]').inputValue(), initialSlot.id);
+      assert.equal(await form.locator('[name="room"]').inputValue(), "Salle A");
+      await form.locator('[name="room"]').fill("Salle B");
+      await form.locator('[name="end_time"]').fill("07:00");
+      await form.getByRole("button", { name: "Enregistrer les modifications", exact: true }).click();
+      await page.getByText("Heures invalides.", { exact: true }).waitFor();
+      assert.equal(await form.locator('[name="id"]').inputValue(), initialSlot.id);
+      assert.equal(await form.locator('[name="room"]').inputValue(), "Salle B");
+      assert.equal(await form.locator('[name="end_time"]').inputValue(), "07:00");
+      assert.equal(ok(await f.state(admin)).timetable[0].room, "Salle A");
+      await form.locator('[name="end_time"]').fill("09:00");
+      await form.getByRole("button", { name: "Enregistrer les modifications", exact: true }).click();
+      await page.locator("#timetable-printable").getByText("Salle B", { exact: true }).waitFor();
+      const editedSlots = ok(await f.state(admin)).timetable;
+      assert.equal(editedSlots.length, 1, "Editing must update the existing slot, not create another");
+      assert.equal(editedSlots[0].id, initialSlot.id);
+      assert.equal(editedSlots[0].room, "Salle B");
+      assert.equal(await page.locator('form[data-operation=timetable] [name="id"]').count(), 0);
+      await page.locator(`[data-edit-slot="${initialSlot.id}"]`).click();
+      form = page.locator("form[data-operation=timetable]");
+      await form.locator('[name="room"]').fill("Modification abandonnée");
+      await form.locator("[data-cancel-slot-edit]").click();
+      assert.equal(await form.locator('[name="id"]').count(), 0);
+      assert.equal(await form.locator('[name="room"]').inputValue(), "");
+      assert.equal(await form.locator('[type="submit"]').textContent(), "Enregistrer");
+      assert.equal(ok(await f.state(admin)).timetable[0].room, "Salle B");
       await page
         .getByRole("button", { name: "Notes & évaluations", exact: true })
         .click();
@@ -298,6 +328,47 @@ test(
         await page.locator("#school-printout").textContent(),
         /18.00/,
       );
+      const classmate = ok(await f.record("school_users", {
+        establishment_id: school.id,
+        email: "classmate@browser.invalid",
+        password: f.password,
+        passwordConfirm: f.password,
+        first_name: "Camarade",
+        last_name: "Bulletin",
+        role: "student",
+      }, f.root));
+      ok(await f.record("enrollments", {
+        establishment_id: school.id,
+        student_id: classmate.id,
+        academic_year_id: year.id,
+        class_id: cl.id,
+        enrolled_on: "2026-10-18",
+        registration_fee: 10000,
+        tuition_fee: 90000,
+      }, admin));
+      const savedComment = "Très bon travail & progrès <à confirmer>";
+      ok(await f.action(admin, "report-comment", {
+        student: users.student.id,
+        period: await page.locator("#report-period").inputValue(),
+        comment: savedComment,
+      }));
+      await page.getByRole("button", { name: "Bulletins", exact: true }).click();
+      await page.locator(`#report-student option[value="${classmate.id}"]`).waitFor({ state: "attached" });
+      await page.locator("#report-student").selectOption(users.student.id);
+      await page.locator('form[data-operation="report-comment"] textarea').waitFor();
+      assert.equal(await page.locator('form[data-operation="report-comment"] textarea').inputValue(), savedComment);
+      const selectedReportStudent = await page.locator("#report-student").inputValue();
+      await page.getByRole("button", { name: "Imprimer les bulletins de la classe", exact: true }).click();
+      assert.equal(await page.locator("#school-printout").count(), 1);
+      assert.equal(await page.locator("#payment-receipt").count(), 0);
+      const classReports = page.locator("#school-printout .class-report-page");
+      assert.equal(await classReports.count(), 2);
+      const reportNames = await classReports.locator(".report-student-card > div:first-child strong").allTextContents();
+      assert.deepEqual(reportNames, ["Camarade Bulletin", "student Démo"]);
+      assert.match(await classReports.first().textContent(), /Bulletin scolaire/);
+      assert.match(await classReports.nth(1).textContent(), /18\.00/);
+      assert.equal(await page.locator("#report-student").inputValue(), selectedReportStudent);
+      assert.equal(await page.locator("#school-report").count(), 1);
       preferences = page.locator("#document-preferences");
       await preferences.locator('[name="showRank"]').uncheck();
       await preferences.locator('[type="submit"]').click();

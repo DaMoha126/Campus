@@ -586,7 +586,7 @@ test(
       await t.test(
         "timetable conflicts and attendance justifications",
         async () => {
-          ok(
+          const editable = ok(
             await action(tokens.admin, "timetable", {
               assignment: as.id,
               weekday: 1,
@@ -595,6 +595,28 @@ test(
               room: "A1",
             }),
           );
+          const editData = {
+            id: editable.id,
+            assignment: as.id,
+            weekday: 1,
+            start_time: "08:00",
+            end_time: "09:00",
+            room: "A1 modifiée",
+          };
+          const updated = ok(await action(tokens.admin, "timetable", editData));
+          assert.equal(updated.id, editable.id);
+          const afterUpdate = ok(await state(tokens.admin)).timetable;
+          assert.equal(afterUpdate.length, 1, "Editing must not create a duplicate slot");
+          assert.equal(afterUpdate[0].room, "A1 modifiée");
+          for (const key of ["foreign", "teacher", "registrar", "accountant", "student", "parent"]) {
+            const refusal = await action(tokens[key], "timetable", {
+              ...editData,
+              room: "Mutation interdite",
+            });
+            assert.equal(refusal.status, 403, `${key}: ${JSON.stringify(refusal.data)}`);
+          }
+          assert.deepEqual(ok(await state(tokens.admin)).timetable, afterUpdate,
+            "Refused updates must leave the authorized timetable unchanged");
           denied(
             await action(tokens.admin, "timetable", {
               assignment: as.id,
@@ -616,6 +638,18 @@ test(
               valid_until: "2026-12-31",
             }),
           );
+          const conflictingUpdate = await action(tokens.admin, "timetable", {
+            ...editData,
+            start_time: "08:30",
+            end_time: "09:30",
+          });
+          assert.equal(conflictingUpdate.status, 400);
+          assert.match(conflictingUpdate.data.message, /Conflit/);
+          const retained = ok(await state(tokens.admin)).timetable.find((x) => x.id === editable.id);
+          assert.equal(retained.start_time, "08:00");
+          assert.equal(retained.end_time, "09:00");
+          assert.equal(retained.room, "A1 modifiée");
+
           ok(
             await action(tokens.admin, "timetable", {
               assignment: as.id,
