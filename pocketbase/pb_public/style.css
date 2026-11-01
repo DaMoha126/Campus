@@ -687,3 +687,8 @@ td form textarea {
 }
 .document-header { background: transparent; color: var(--document-ink, #203252); padding: 0 0 20px; }
 .document-header > .document-stamp { color: #65728a; }
+@media print {
+  #school-printout .class-report-page + .class-report-page { break-before: page; }
+  #school-printout .report-printable .table-wrap { overflow: visible; }
+  #school-printout .report-printable table { min-width: 0; }
+}

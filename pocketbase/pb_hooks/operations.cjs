@@ -956,6 +956,7 @@ function action(app, auth, b) {
       }
       case "timetable": {
         admin(a);
+        const existing = data.id ? own(tx, "timetable_slots", data.id, a) : null;
         const as = own(tx, "teaching_assignments", data.assignment, a),
           weekday = number(data.weekday, "Jour", 1, 7);
         if (!Number.isInteger(weekday)) bad("Jour invalide.");
@@ -995,6 +996,7 @@ function action(app, auth, b) {
           { school: a.school, weekday },
         );
         for (const slot of slots) {
+          if (existing && slot.id === existing.id) continue;
           const other = own(
             tx,
             "teaching_assignments",
@@ -1039,7 +1041,7 @@ function action(app, auth, b) {
           week_type: weekType,
           valid_from: validFrom,
           valid_until: validUntil,
-        });
+        }, existing?.id);
         break;
       }
       case "attendance": {
