@@ -614,7 +614,7 @@ test(
         "Compte & sécurité",
       ]) {
         await page.getByRole("button", { name, exact: true }).click();
-        await page.getByRole("heading", { name, exact: true }).waitFor();
+        await page.getByRole("heading", { name, exact: true, level: 1 }).waitFor();
       }
       await page.screenshot({
         path: "/tmp/etudia-administration.png",
