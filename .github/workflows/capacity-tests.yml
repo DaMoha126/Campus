@@ -1,0 +1,60 @@
+name: Etudia capacity benchmark (2 schools, 3200 students)
+on:
+  push:
+    paths:
+      - scripts/capacity-benchmark.cjs
+      - support/capacity-seed.cjs
+      - .github/workflows/capacity-tests.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: capacity-tests-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  capacity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install PocketBase (same version as Docker)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^ARG PB_VERSION=//p' Dockerfile)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/pocketbase"
+          cd "$RUNNER_TEMP/pocketbase"
+          archive="pocketbase_${version}_linux_amd64.zip"
+          curl --fail --location --retry 3 -o "$archive" "https://github.com/pocketbase/pocketbase/releases/download/v${version}/${archive}"
+          curl --fail --location --retry 3 -o checksums.txt "https://github.com/pocketbase/pocketbase/releases/download/v${version}/checksums.txt"
+          grep " ${archive}$" checksums.txt | sha256sum --check -
+          unzip "$archive" pocketbase
+          chmod +x pocketbase
+          echo "POCKETBASE_BIN=$PWD/pocketbase" >> "$GITHUB_ENV"
+      - name: Benchmark isolated schools and API workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x "$POCKETBASE_BIN"
+          node scripts/capacity-benchmark.cjs
+          test -s capacity-results.json
+          test -s capacity-results.md
+      - name: Publish benchmark summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f capacity-results.md ]; then
+            cat capacity-results.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capacity-results
+          path: |
+            capacity-results.json
+            capacity-results.md
+          if-no-files-found: warn
