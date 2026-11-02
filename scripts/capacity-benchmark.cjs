@@ -25,9 +25,18 @@ async function request(route, token, body, timeout = 30000) {
   } catch (error) { return { status: 0, ms: performance.now() - began, bytes: 0, error: error.name }; }
 }
 async function login(identity, superuser = false) {
-  const result = await request('collections/' + (superuser ? '_superusers' : 'school_users') + '/auth-with-password', '', { identity, password });
-  if (result.status !== 200 || !result.data.token) throw Error('Representative login failed: ' + (superuser ? 'root' : identity) + ' status ' + result.status);
-  return result.data.token;
+  // Retain production rate limits. Back off only during fixture authentication,
+  // outside measured workloads; never weaken throttling in the application.
+  for (let attempt = 0; attempt < 13; attempt++) {
+    const result = await request('collections/' + (superuser ? '_superusers' : 'school_users') + '/auth-with-password', '', { identity, password });
+    if (result.status === 429 && attempt < 12) {
+      report.authenticationBackoffs = (report.authenticationBackoffs || 0) + 1;
+      await delay(5000);
+      continue;
+    }
+    if (result.status !== 200 || !result.data.token) throw Error('Representative login failed: ' + (superuser ? 'root' : identity) + ' status ' + result.status);
+    return result.data.token;
+  }
 }
 async function stop() {
   if (!proc || proc.exitCode !== null) return;
@@ -64,7 +73,7 @@ function validateState(data, school, role, student) {
   return data.classes.length === 1 && data.enrollments.length === 1 && data.grades.length === 30 && data.attendance.length === 1 && data.payments.length === 1;
 }
 function summary() {
-  const lines = ['# Étudia — isolated capacity benchmark', '', report.scope, '', 'Two establishments × 1,600 fictitious pupils; no requests to a public service.', '', `Seed: ${report.seedMs ?? 'not completed'} ms. SQLite: ${report.sqliteBytes ?? 'unknown'} bytes.`, '', '## Created volumes', '', '```json', JSON.stringify(report.volumes || {}, null, 2), '```', '', 'Correctness passed: ' + Boolean(report.passed) + '. Indicative performance references met: ' + String(report.performanceReferencesMet ?? 'not completed') + '.', '', '## Correctness', ...report.checks.map(c => `- ${c.passed ? 'PASS' : 'FAIL'} ${c.name}${c.detail ? ': ' + c.detail : ''}`), '', '## GET /api/etudia/state', '', '| School | Role | Concurrency | Samples | HTTP 200 | p50 ms | p95 ms | Max ms | Max bytes |', '|---|---|---:|---:|---:|---:|---:|---:|---:|', ...report.measurements.map(m => `| ${m.school} | ${m.role} | ${m.concurrency} | ${m.samples} | ${m.http200} | ${m.p50Ms} | ${m.p95Ms} | ${m.maxMs} | ${m.maxBytes} |`), '', 'Student concurrency uses distinct pupil accounts. Administrator concurrency uses the same administrator account and represents simultaneous requests, not distinct staff users.', '', 'Latency references: sequential p95 ≤2 s; concurrency 10 p95 ≤5 s. These are indicative, not an SLA. CI runner performance does not establish production capacity. No long-duration or browser rendering benchmark is included.', '', ...report.errors.map(e => '- ERROR: ' + e)];
+  const lines = ['# Étudia — isolated capacity benchmark', '', report.scope, '', 'Two establishments × 1,600 fictitious pupils; no requests to a public service.', '', `Seed: ${report.seedMs ?? 'not completed'} ms. SQLite: ${report.sqliteBytes ?? 'unknown'} bytes.`, '', '## Created volumes', '', '```json', JSON.stringify(report.volumes || {}, null, 2), '```', '', 'Correctness passed: ' + Boolean(report.passed) + '. Indicative performance references met: ' + String(report.performanceReferencesMet ?? 'not completed') + '.', '', 'Authentication backoffs (outside measurements, rate limits retained): ' + (report.authenticationBackoffs || 0), '', '## Correctness', ...report.checks.map(c => `- ${c.passed ? 'PASS' : 'FAIL'} ${c.name}${c.detail ? ': ' + c.detail : ''}`), '', '## GET /api/etudia/state', '', '| School | Role | Concurrency | Samples | HTTP 200 | p50 ms | p95 ms | Max ms | Max bytes |', '|---|---|---:|---:|---:|---:|---:|---:|---:|', ...report.measurements.map(m => `| ${m.school} | ${m.role} | ${m.concurrency} | ${m.samples} | ${m.http200} | ${m.p50Ms} | ${m.p95Ms} | ${m.maxMs} | ${m.maxBytes} |`), '', 'Student concurrency uses distinct pupil accounts. Administrator concurrency uses the same administrator account and represents simultaneous requests, not distinct staff users.', '', 'Latency references: sequential p95 ≤2 s; concurrency 10 p95 ≤5 s. These are indicative, not an SLA. CI runner performance does not establish production capacity. No long-duration or browser rendering benchmark is included.', '', ...report.errors.map(e => '- ERROR: ' + e)];
   return lines.join('\n') + '\n';
 }
 (async () => {
