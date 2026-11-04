@@ -233,6 +233,7 @@ function state(app, auth, options = {}) {
     isStaff = staffRoles.includes(a.role),
     canSeeSchoolDirectory = isDirection || isRegistrar,
     family = a.role === "parent" || a.role === "student";
+  const compactOverview = page === "overview" && options.compact === "1" && isStaff;
   const d = {};
   const unreadCount = () => app.countRecords("school_messages", $dbx.hashExp({ school: a.school, recipient: a.id, read: false }));
   d.school = pack(app.findRecordById("establishments", a.school), [
@@ -265,10 +266,10 @@ function state(app, auth, options = {}) {
     "academic_year_id",
     "capacity",
   ]);
-  const links = a.role === "student" ? [] : all(app, "parent_links", a.school, fields.parent_links,
+  const links = a.role === "student" || compactOverview ? [] : all(app, "parent_links", a.school, fields.parent_links,
     a.role === "parent" ? { condition: "parent={:stateParent}", params: { stateParent: a.id } } : {});
   let students = a.role === "parent" ? links.map(x => x.student) : a.role === "student" ? [a.id] : [];
-  let enrollments = all(app, "enrollments", a.school, [
+  let enrollments = compactOverview ? [] : all(app, "enrollments", a.school, [
     "student_id",
     "class_id",
     "academic_year_id",
@@ -347,7 +348,7 @@ function state(app, auth, options = {}) {
   const users = all(app, "school_users", a.school, [
     "first_name", "last_name", "role", "disabled",
     ...(canSeeSchoolDirectory ? ["phone", "login_id"] : []),
-  ], isStaff ? {} : {
+  ], compactOverview ? { condition: "role!='student' && role!='parent'" } : isStaff ? {} : {
     condition: "role='administrator' || role='school_life' || role='accountant' || (" + contactScope.condition + ")",
     params: contactScope.params,
   });
@@ -515,7 +516,7 @@ function state(app, auth, options = {}) {
     ["timetable_slots", "timetable"],
     ["attendance", "attendance"],
   ])
-    d[key] = wants(key) ? all(app, name, a.school, fields[name], joinScopes(assignmentScope("assignment."), name === "attendance" && family ? recordScope("student", students, "stateStudent") : {})).filter(
+    d[key] = wants(key) && !(compactOverview && key === "attendance") ? all(app, name, a.school, fields[name], joinScopes(assignmentScope("assignment."), name === "attendance" && family ? recordScope("student", students, "stateStudent") : {})).filter(
       (x) =>
         (isStaff || assignmentIds.has(x.assignment)) &&
         (name !== "attendance" || isStaff || studentIdSet.has(x.student)),
@@ -593,6 +594,7 @@ function state(app, auth, options = {}) {
         .map((x) => pack(x, [...fields.school_audit, "created"]))
     : [];
   d.unreadMessageCount = unreadCount();
+  if (compactOverview) d.overviewCounts = { unjustifiedAttendance: app.countRecords("attendance", $dbx.hashExp({ school: a.school, justified: false }), $dbx.exp("status != {:present}", { present: "present" })) };
   return d;
 }
 function action(app, auth, b) {

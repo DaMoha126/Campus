@@ -95,6 +95,7 @@ async function schoolWorkspace() {
   else app.innerHTML = loading;
   try {
     let scope = "";
+    if (requestedPage === "overview") scope = "&compact=1";
     if (requestedPage === "grades" && gradesClass !== "")
       scope = "&classroom=" + encodeURIComponent(gradesClass || "auto");
     if (requestedPage === "reports")
@@ -624,8 +625,7 @@ function schoolScreen(d) {
         ],
         [
           "Absences / retards",
-          d.attendance.filter((x) => x.status !== "present" && !x.justified)
-            .length,
+          d.overviewCounts?.unjustifiedAttendance ?? d.attendance.filter((x) => x.status !== "present" && !x.justified).length,
         ],
       ]
         .map(

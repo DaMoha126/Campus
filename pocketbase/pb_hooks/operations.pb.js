@@ -6,6 +6,7 @@ routerAdd(
     return e.json(200, require(__hooks + "/operations.cjs").state(e.app, e.auth, {
       page: query.get("page"), classroom: query.get("classroom"),
       student: query.get("student"), period: query.get("period"),
+      compact: query.get("compact"),
     }));
   },
   $apis.requireAuth("school_users"),

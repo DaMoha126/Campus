@@ -93,9 +93,9 @@ function validateState(data, school, role, student, page = "full") {
   if ((data.attendance || []).some(x => !studentIds.has(x.student) || !assignmentIds.has(x.assignment) || (role === 'student' && x.student !== student))) return false;
   if (role === 'teacher') return data.me.id === school.teacher && data.assignments.length === 40 && data.assignments.every(x => x.teacher === school.teacher);
   const wanted = key => page === 'full' || (page === 'overview' ? ['attendance'] : ['evaluations', 'grades', 'reportRanks']).includes(key);
-  const counts = role === 'administrator' ? { evaluations: page === 'reports' ? 30 : 1200, grades: page === 'reports' ? 1200 : 48000, attendance: 1600, payments: 1600 } : { evaluations: 30, grades: 30, attendance: 1, payments: 1 };
+  const counts = role === 'administrator' ? { evaluations: page === 'reports' ? 30 : 1200, grades: page === 'reports' ? 1200 : 48000, attendance: page === 'overview' ? 0 : 1600, payments: 1600 } : { evaluations: 30, grades: 30, attendance: 1, payments: 1 };
   for (const [key, count] of Object.entries(counts)) if (!Array.isArray(data[key]) || data[key].length !== (wanted(key) ? count : 0)) return false;
-  if (role === 'administrator') return data.me.id === school.admin && data.people.filter(x => x.role === 'student').length === 1600 && data.classes.length === 40 && data.subjects.length === 10 && data.assignments.length === 400;
+  if (role === 'administrator') return data.me.id === school.admin && data.people.filter(x => x.role === 'student').length === (page === 'overview' ? 0 : 1600) && (page !== 'overview' || (data.enrollments.length === 0 && data.overviewCounts?.unjustifiedAttendance === 1600)) && data.classes.length === 40 && data.subjects.length === 10 && data.assignments.length === 400;
   if (wanted('reportRanks') && (!Array.isArray(data.reportRanks) || data.reportRanks.length !== 1 || data.reportRanks.some(x => x.student !== student || x.class_size !== 40 || x.rank < 1 || x.rank > 40))) return false;
   return data.me.id === student && data.classes.length === 1 && data.enrollments.length === 1;
 
@@ -143,7 +143,7 @@ function summary() {
         const scenario = 'School ' + (i + 1) + ' ' + role + ' ' + page;
         progress(scenario + ': waiting ' + cooldownMs + ' ms outside measurement for rate-limit window');
         await delay(cooldownMs);
-        const route = 'etudia/state' + (page === 'full' ? '' : '?page=' + page + (page === 'reports' ? '&classroom=auto' : ''));
+        const route = 'etudia/state' + (page === 'full' ? '' : '?page=' + page + (page === 'reports' ? '&classroom=auto' : '&compact=1'));
         let healthyBaselines = true, largestResponse = 0;
         const stages = page === 'full' ? [1, 5, 10] : [1, 5, 10, 50, 100, ...(loadLimits.allow1000 ? [1000] : [])];
         for (const concurrency of stages) {

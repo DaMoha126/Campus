@@ -1173,6 +1173,15 @@ test(
         for (const page of ["__proto__", "constructor", "unknown", "reports || true", "../settings"])
           assert.equal((await req("etudia/state?page=" + encodeURIComponent(page), undefined, tokens.student)).status, 400);
         const fullAdmin = ok(await state(tokens.admin));
+        const overview = ok(await req("etudia/state?page=overview&compact=1", undefined, tokens.admin));
+        assert.equal(overview.overviewCounts.unjustifiedAttendance, fullAdmin.attendance.filter(x => x.status !== "present" && !x.justified).length);
+        assert.equal(overview.attendance.length, 0);
+        assert.equal(overview.enrollments.length, 0);
+        assert.ok(overview.people.every(x => !["student", "parent"].includes(x.role)));
+        for (const key of ["classes", "assignments", "subjects", "homework", "announcements"])
+          assert.deepEqual(canonical(overview[key]), canonical(fullAdmin[key]));
+        const compactStudent = ok(await req("etudia/state?page=overview&compact=1", undefined, tokens.student));
+        assert.ok(!compactStudent.overviewCounts);
         for (const classroom of fullAdmin.classes) {
           const scoped = ok(await req("etudia/state?page=grades&classroom=" + classroom.id, undefined, tokens.admin));
           const assignments = new Set(fullAdmin.assignments.filter(x => x.classroom === classroom.id).map(x => x.id));
