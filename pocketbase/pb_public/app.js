@@ -27,17 +27,18 @@ function notify(message) {
 let authToken = "",
   currentUser = null;
 async function pb(route, body, method) {
+  const requestToken = authToken;
   const response = await fetch("/api/" + route, {
     method: method || (body ? "POST" : "GET"),
     headers: {
       ...(body ? { "Content-Type": "application/json" } : {}),
-      ...(authToken ? { Authorization: authToken } : {}),
+      ...(requestToken ? { Authorization: requestToken } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401) {
+    if (response.status === 401 && authToken === requestToken) {
       authToken = "";
       currentUser = null;
     }
@@ -73,6 +74,8 @@ async function api(route, body) {
     return r.record;
   }
   if (route === "logout") {
+    schoolLoadId++;
+    schoolData = null;
     authToken = "";
     currentUser = null;
     return {};
@@ -81,7 +84,7 @@ async function api(route, body) {
   if (route === "me") return currentUser;
   if (route === "overview") {
     if (currentUser.role === "accountant") {
-      const ops = await pb("etudia/state");
+      const ops = await pb("etudia/state?page=finances");
       return {
         school: ops.school,
         years: ops.years,
@@ -106,7 +109,7 @@ async function api(route, body) {
         records("enrollments"),
         records("payments"),
       ]);
-    const ops = await pb("etudia/state");
+    const ops = await pb("etudia/state?page=finances");
     return {
       school,
       years,
@@ -199,7 +202,11 @@ const list = (items, format) =>
 let adminPage = "enrollments",
   latestData = null;
 async function dashboard() {
+  const requestId = ++schoolLoadId, userId = currentUser?.id;
+  schoolData = null;
+  app.removeAttribute("aria-busy");
   const d = await api("overview");
+  if (requestId !== schoolLoadId || currentUser?.id !== userId) return;
   latestData = d;
   app.innerHTML = `<span class="badge">Administration · PocketBase local</span><h1>${esc(d.school.name)}</h1><p>${esc(d.school.city || "")} · ${esc(d.school.country)}</p><div class="metrics">${[
     ["Élèves", d.people.filter((x) => x.role === "student").length],

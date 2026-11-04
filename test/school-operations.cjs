@@ -1066,6 +1066,116 @@ test(
         },
       );
       await t.test(
+        "optimized state keeps weighted ranks private and published-only",
+        async () => {
+          const classroom = ok(await record("classes", {
+            establishment_id: a.id, academic_year_id: year.id,
+            name: "Classe rangs performance", capacity: 10,
+          }, tokens.admin));
+          const peers = [];
+          for (let i = 0; i < 3; i++) {
+            const student = ok(await record("school_users", {
+              establishment_id: a.id, role: "student", first_name: "Rang" + i,
+              last_name: "Confidentialité", email: "rank" + i + "@fixture.invalid",
+              password, passwordConfirm: password,
+            }, root));
+            peers.push(student);
+            ok(await record("enrollments", {
+              establishment_id: a.id, academic_year_id: year.id,
+              class_id: classroom.id, student_id: student.id, enrolled_on: "2026-10-01",
+            }, tokens.admin));
+          }
+          const french = ok(await state(tokens.admin)).subjects.find(x => x.name === "Français");
+          const mathsAssignment = ok(await action(tokens.admin, "assignment", {
+            teacher: users.teacher.id, classroom: classroom.id, subject: subject.id, coefficient: 3,
+          }));
+          const frenchAssignment = ok(await action(tokens.admin, "assignment", {
+            teacher: users.teacher.id, classroom: classroom.id, subject: french.id, coefficient: 1,
+          }));
+          const addEvaluation = async (assignment, label, maximum, weight, values, published = true, selectedPeriod = period.id, date = "2026-10-18") => {
+            const evaluation = ok(await action(tokens.admin, "evaluation", {
+              assignment, period: selectedPeriod, title: label, held_on: date, maximum, weight,
+            }));
+            for (let i = 0; i < peers.length; i++) {
+              const value = values[i];
+              ok(await action(tokens.admin, "grade", {
+                evaluation: evaluation.id, student: peers[i].id,
+                status: typeof value === "number" ? "graded" : value,
+                ...(typeof value === "number" ? { score: value } : {}),
+              }));
+            }
+            if (published) ok(await action(tokens.admin, "publish-evaluation", { id: evaluation.id, published: true }));
+            return evaluation;
+          };
+          await addEvaluation(mathsAssignment.id, "Maths barème 10", 10, 1, [10, 7, 10]);
+          await addEvaluation(mathsAssignment.id, "Maths pondération 3", 20, 3, [12, 14, 20]);
+          await addEvaluation(frenchAssignment.id, "Français", 20, 1, [20, 20, "absent"]);
+          await addEvaluation(mathsAssignment.id, "Dispenses ne valent pas zéro", 20, 20, ["exempt", "absent", "exempt"]);
+          const unpublished = await addEvaluation(mathsAssignment.id, "Notes privées", 20, 20, [0, 20, 0], false);
+          const secondPeriod = ok(await action(tokens.admin, "period", {
+            year: year.id, label: "Période rangs séparée", starts_on: "2027-01-01", ends_on: "2027-03-31",
+          }));
+          await addEvaluation(mathsAssignment.id, "Autre période", 20, 1, [20, 0, 0], true, secondPeriod.id, "2027-01-15");
+          ok(await action(tokens.admin, "parent-link", { parent: users.parent2.id, student: peers[0].id }));
+          const studentToken = (await f.login("rank0@fixture.invalid")).token;
+          const studentState = ok(await state(studentToken));
+          const parentState = ok(await state(tokens.parent2));
+          // Maths = (20*1+12*3)/4=14; weighted general=(14*3+20)/4=15.5.
+          // Peer 1 ties at 15.5 and peer 2 has 20 with absence excluded: shared rank 2/3.
+          for (const payload of [studentState, parentState]) {
+            const ranking = payload.reportRanks.find(x => x.student === peers[0].id && x.period === period.id);
+            assert.deepEqual(ranking, { student: peers[0].id, period: period.id, rank: 2, class_size: 3 });
+            assert.ok(payload.reportRanks.every(x => x.student === peers[0].id));
+            assert.ok(payload.grades.every(x => x.student === peers[0].id));
+            assert.ok(payload.evaluations.every(x => x.published));
+            assert.ok(!payload.evaluations.some(x => x.id === unpublished.id));
+            assert.ok(!payload.people.some(x => [peers[1].id, peers[2].id].includes(x.id)));
+          }
+          const foreignState = ok(await state(tokens.foreign));
+          assert.ok(!foreignState.classes.some(x => x.id === classroom.id));
+          assert.equal(foreignState.grades.length, 0);
+          assert.ok(!(foreignState.reportRanks || []).length);
+          const teacherState = ok(await state(tokens.teacher));
+          assert.ok(teacherState.assignments.every(x => x.teacher === users.teacher.id));
+          assert.equal(teacherState.payments.length, 0);
+          const accountantState = ok(await state(tokens.accountant));
+          assert.equal(accountantState.grades.length, 0);
+          assert.equal(accountantState.evaluations.length, 0);
+        },
+      );
+
+      await t.test("scoped modules preserve full-state permissions and data", async () => {
+        const pages = {
+          overview: ["homework", "attendance", "announcements"],
+          grades: ["evaluations", "grades"],
+          reports: ["evaluations", "grades", "reportComments", "reportRanks"],
+          homework: ["homework", "submissions"], lessons: ["lessons"],
+          timetable: ["timetable"], attendance: ["attendance", "absenceRequests"],
+          announcements: ["announcements"], messages: ["messages"],
+          finances: ["payments", "reversals", "deadlines"], settings: ["audit"],
+          classes: [], setup: [],
+        };
+        const optional = [...new Set(Object.values(pages).flat())];
+        const stable = (x) => Array.isArray(x) ? x.map(stable) : x && typeof x === "object" ? Object.fromEntries(Object.keys(x).sort().map(key => [key, stable(x[key])])) : x;
+        const canonical = (items) => (items || []).map(x => JSON.stringify(stable(x))).sort();
+        for (const role of ["admin", "registrar", "accountant", "teacher", "student", "parent", "parent2", "foreign"]) {
+          const full = ok(await state(tokens[role]));
+          for (const [page, included] of Object.entries(pages)) {
+            const scoped = ok(await req("etudia/state?page=" + page, undefined, tokens[role]));
+            for (const key of optional) {
+              assert.deepEqual(canonical(scoped[key]), included.includes(key) ? canonical(full[key]) : [], role + "/" + page + "/" + key);
+            }
+            for (const key of ["school", "me", "permissions", "years", "classes", "assignments", "people", "enrollments", "links", "subjects", "periods"])
+              assert.deepEqual(scoped[key], full[key], role + "/" + page + "/base/" + key);
+            assert.equal(scoped.unreadMessageCount, full.unreadMessageCount, role + "/" + page + "/unread");
+          }
+        }
+        for (const page of ["__proto__", "constructor", "unknown", "reports || true", "../settings"])
+          assert.equal((await req("etudia/state?page=" + encodeURIComponent(page), undefined, tokens.student)).status, 400);
+        assert.equal((await req("etudia/state?page=reports")).status, 401);
+      });
+
+      await t.test(
         "disable tokens, password reset, current-password proof",
         async () => {
           ok(

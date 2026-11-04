@@ -4,6 +4,8 @@ on:
     paths:
       - scripts/capacity-benchmark.cjs
       - support/capacity-seed.cjs
+      - pocketbase/pb_hooks/**
+      - pocketbase/pb_migrations/**
       - .github/workflows/capacity-tests.yml
   workflow_dispatch:
 permissions:
@@ -36,6 +38,7 @@ jobs:
           chmod +x pocketbase
           echo "POCKETBASE_BIN=$PWD/pocketbase" >> "$GITHUB_ENV"
       - name: Benchmark isolated schools and API workloads
+        timeout-minutes: 25
         shell: bash
         run: |
           set -euo pipefail

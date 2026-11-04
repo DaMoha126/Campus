@@ -918,6 +918,63 @@ test(
       assert.ok(
         await accountantPage.locator('form[data-action="payments"]').count(),
       );
+      // Settings intentionally loads no grades, while export must include the
+      // complete authorized dataset rather than that module's partial state.
+      const stateRequests = [];
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname === "/api/etudia/state") stateRequests.push(url.searchParams.get("page"));
+      });
+      await page.evaluate(async () => {
+        adminPage = "workspace";
+        schoolPage = "settings";
+        await schoolWorkspace();
+      });
+      await page.locator("#export-school-json").waitFor();
+      assert.equal(stateRequests.at(-1), "settings");
+      assert.equal(await page.evaluate(() => schoolData.grades.length), 0);
+      const exportDownload = page.waitForEvent("download");
+      await page.locator("#export-school-json").click();
+      const exported = JSON.parse(require("node:fs").readFileSync(await (await exportDownload).path(), "utf8"));
+      assert.equal(stateRequests.at(-1), null);
+      const complete = ok(await f.state(admin));
+      assert.deepEqual(exported.grades, complete.grades);
+      assert.ok(exported.grades.length > 0);
+      assert.deepEqual(exported.payments, complete.payments);
+
+      // A failed module load must remove stale data and support retry.
+      await page.route("**/api/etudia/state?page=grades", (route) => route.fulfill({
+        status: 503, contentType: "application/json", body: JSON.stringify({ message: "Indisponibilité de test" }),
+      }), { times: 1 });
+      await page.locator('[data-school-page="grades"]').click();
+      await page.getByRole("heading", { name: "Chargement impossible" }).waitFor();
+      assert.equal(await page.evaluate(() => schoolData), null);
+      await page.getByRole("button", { name: "Réessayer", exact: true }).click();
+      await page.locator("#grades-class").waitFor();
+      assert.equal(stateRequests.at(-1), "grades");
+      assert.equal(await page.locator("#app").getAttribute("aria-busy"), null);
+
+      // A late module response cannot replace the finance page navigated to.
+      let releaseResponse;
+      const release = new Promise((resolve) => { releaseResponse = resolve; });
+      let requestStarted;
+      const started = new Promise((resolve) => { requestStarted = resolve; });
+      await page.route("**/api/etudia/state?page=reports", async (route) => {
+        const response = await route.fetch();
+        requestStarted();
+        await release;
+        await route.fulfill({ response });
+      }, { times: 1 });
+      await page.locator('[data-school-page="reports"]').click();
+      await started;
+      await page.locator('[data-page="enrollments"]').click();
+      await page.getByRole("heading", { name: "Inscriptions & paiements", exact: true }).waitFor();
+      const lateResponse = page.waitForResponse((response) => response.url().endsWith("/api/etudia/state?page=reports"));
+      releaseResponse();
+      await lateResponse;
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      await page.getByRole("heading", { name: "Inscriptions & paiements", exact: true }).waitFor();
+      assert.equal(await page.evaluate(() => schoolData), null);
       assert.deepEqual(errors, []);
     } finally {
       if (browser) await browser.close();

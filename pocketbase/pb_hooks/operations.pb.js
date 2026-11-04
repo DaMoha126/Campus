@@ -1,7 +1,7 @@
 routerAdd(
   "GET",
   "/api/etudia/state",
-  (e) => e.json(200, require(__hooks + "/operations.cjs").state(e.app, e.auth)),
+  (e) => e.json(200, require(__hooks + "/operations.cjs").state(e.app, e.auth, { page: e.request.url.query().get("page") })),
   $apis.requireAuth("school_users"),
 );
 routerAdd(

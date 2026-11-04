@@ -60,7 +60,7 @@ assert.equal((await req('collections/enrollments/records',undefined,student.toke
 assert.equal((await req('collections/payments/records',undefined,student.token)).data.items.length,0);
 
 // Exercise the actual frontend adapter against the live PocketBase API and render templates.
-const vm=require('node:vm');const elements={'#app':{innerHTML:'',textContent:'',addEventListener(){}},'#notice':{textContent:''},'#logout':{hidden:true,addEventListener(){}}};
+const vm=require('node:vm');const elements={'#app':{innerHTML:'',textContent:'',addEventListener(){},setAttribute(){},removeAttribute(){}},'#notice':{textContent:''},'#logout':{hidden:true,addEventListener(){}}};
 const context=vm.createContext({console,fetch:(url,options)=>fetch(base+url,options),crypto:crypto.webcrypto,Intl,Date,URL,Blob,setTimeout:()=>0,clearTimeout(){},FormData,document:{querySelector:s=>elements[s]||null,addEventListener(){},querySelectorAll:()=>[]},window:{confirm:()=>true}});
 vm.runInContext(fs.readFileSync('pocketbase/pb_public/school.js','utf8'),context);vm.runInContext(fs.readFileSync('pocketbase/pb_public/finance.js','utf8'),context);vm.runInContext(fs.readFileSync('pocketbase/pb_public/app.js','utf8'),context);await vm.runInContext('start()',context);
 context.existingToken=admin;context.existingUser=(await req('collections/school_users/records',undefined,admin)).data.items.find(u=>u.email==='admin@test.invalid');await vm.runInContext('authToken=existingToken;currentUser=existingUser;start()',context);

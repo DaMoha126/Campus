@@ -3,7 +3,8 @@ let schoolData = null,
   schoolEval = "",
   reportStudent = "",
   reportPeriod = "",
-  timetableClass = "";
+  timetableClass = "",
+  schoolLoadId = 0;
 const schoolLabels = {
   overview: "Tableau de bord",
   classes: "Classes",
@@ -72,18 +73,33 @@ const opButton = (op, data, label) =>
   `<button data-quick-operation="${op}" data-payload="${esc(JSON.stringify(data))}">${label}</button>`;
 const deleteButton = (entity, id) =>
   opButton("delete-item", { entity, id }, "Retirer");
+const unreadSchoolMessages = (d) => Number.isFinite(d.unreadMessageCount)
+  ? d.unreadMessageCount
+  : d.messages.filter((m) => m.recipient === currentUser.id && !m.read).length;
 async function schoolWorkspace() {
-  schoolData = await pb("etudia/state");
-  const d = schoolData,
-    admin = d.me.role === "administrator",
-    schoolLife = d.permissions?.schoolLife,
-    finance =
-      d.permissions?.finance || ["parent", "student"].includes(d.me.role);
+  const requestId = ++schoolLoadId, userId = currentUser?.id;
+  if (!userId) return false;
   if (
-    (!admin && schoolPage === "setup") ||
-    (["parent", "student"].includes(d.me.role) && schoolPage === "classes")
-  )
-    schoolPage = "overview";
+    !(schoolPage in schoolLabels) ||
+    (currentUser.role !== "administrator" && schoolPage === "setup") ||
+    (["parent", "student"].includes(currentUser.role) && schoolPage === "classes")
+  ) schoolPage = "overview";
+  if (currentUser.role === "accountant" && !["finances", "messages", "settings"].includes(schoolPage))
+    schoolPage = "finances";
+  const requestedPage = schoolPage;
+  schoolData = null;
+  app.setAttribute("aria-busy", "true");
+  const content = document.querySelector("#school-content");
+  const loading = '<p role="status">Chargement des données…</p>';
+  if (content) content.innerHTML = loading;
+  else app.innerHTML = loading;
+  try {
+    const d = await pb("etudia/state?page=" + encodeURIComponent(requestedPage));
+    if (requestId !== schoolLoadId || currentUser?.id !== userId) return false;
+    schoolData = d;
+    const admin = d.me.role === "administrator",
+      schoolLife = d.permissions?.schoolLife,
+      finance = d.permissions?.finance || ["parent", "student"].includes(d.me.role);
   app.innerHTML = `<nav class="admin-tabs">${admin ? '<button data-page="enrollments">Inscriptions & paiements</button><button data-page="structure">Classes & comptes</button>' : ""}</nav><div class="workspace"><aside class="workspace-menu"><h2>${esc(d.school.name)}</h2><p>${esc(d.me.first_name)} · ${roles[d.me.role]}</p>${Object.entries(
     schoolLabels,
   )
@@ -98,11 +114,29 @@ async function schoolWorkspace() {
     )
     .map(
       ([key, label]) =>
-        `<button data-school-page="${key}" aria-current="${key === schoolPage ? "page" : "false"}">${label}${key === "messages" && d.messages.some((m) => m.recipient === currentUser.id && !m.read) ? " ●" : ""}</button>`,
+        `<button data-school-page="${key}" aria-current="${key === schoolPage ? "page" : "false"}">${label}${key === "messages" && unreadSchoolMessages(d) > 0 ? " ●" : ""}</button>`,
     )
     .join(
       "",
     )}</aside><div class="workspace-main"><span class="badge">${roles[d.me.role]}</span><h1>${schoolLabels[schoolPage]}</h1><div id="school-content">${schoolScreen(d)}</div></div></div>`;
+    return true;
+  } catch (error) {
+    if (requestId !== schoolLoadId) return false;
+    if (!currentUser) {
+      schoolData = null;
+      await start();
+      return false;
+    }
+    if (currentUser.id !== userId) return false;
+    schoolData = null;
+    const message = `<section class="panel" role="alert"><h2>Chargement impossible</h2><p>${esc(error.message || "Les données n’ont pas pu être récupérées.")}</p><button id="retry-school-load">Réessayer</button></section>`;
+    const target = document.querySelector("#school-content");
+    if (target) target.innerHTML = message;
+    else app.innerHTML = message;
+    return false;
+  } finally {
+    if (requestId === schoolLoadId) app.removeAttribute("aria-busy");
+  }
 }
 let gradesClass = null,
   gradesSubject = "",
@@ -576,8 +610,7 @@ function schoolScreen(d) {
         ["Devoirs", d.homework.length],
         [
           "Messages non lus",
-          d.messages.filter((x) => x.recipient === currentUser.id && !x.read)
-            .length,
+          unreadSchoolMessages(d),
         ],
         [
           "Absences / retards",
@@ -1143,7 +1176,31 @@ function schoolScreen(d) {
       return "<p>Choisissez un module.</p>";
   }
 }
+// Reuse indexed results while printing a whole class from the same snapshot.
+const reportIndexes = new WeakMap();
+function reportIndex(d) {
+  if (reportIndexes.has(d)) return reportIndexes.get(d);
+  const evaluations = new Map(d.evaluations.map(e => [e.id, e]));
+  const gradesByStudent = new Map(), totalsByStudent = new Map();
+  for (const grade of d.grades) {
+    if (!gradesByStudent.has(grade.student)) gradesByStudent.set(grade.student, []);
+    gradesByStudent.get(grade.student).push(grade);
+    const evaluation = evaluations.get(grade.evaluation);
+    if (grade.status !== "graded" || !evaluation?.published) continue;
+    if (!totalsByStudent.has(grade.student)) totalsByStudent.set(grade.student, new Map());
+    const totals = totalsByStudent.get(grade.student);
+    const key = evaluation.assignment + ":" + evaluation.period;
+    const total = totals.get(key) || { weighted: 0, weights: 0 };
+    total.weighted += (grade.score / evaluation.maximum) * 20 * evaluation.weight;
+    total.weights += evaluation.weight;
+    totals.set(key, total);
+  }
+  const index = { gradesByStudent, totalsByStudent };
+  reportIndexes.set(d, index);
+  return index;
+}
 function reportScreen(d) {
+  const index = reportIndex(d);
   const students = d.people.filter((x) => x.role === "student");
   if (!students.some((x) => x.id === reportStudent))
     reportStudent = students[0]?.id || "";
@@ -1163,12 +1220,12 @@ function reportScreen(d) {
         (e) =>
           e.assignment === a.id && e.period === reportPeriod && e.published,
       ),
-      ids = evals.map((x) => x.id);
-    const grades = d.grades.filter(
+      ids = new Set(evals.map((x) => x.id));
+    const grades = (index.gradesByStudent.get(reportStudent) || []).filter(
       (g) =>
         g.student === reportStudent &&
         g.status === "graded" &&
-        ids.includes(g.evaluation),
+        ids.has(g.evaluation),
     );
     let sum = 0,
       w = 0;
@@ -1203,25 +1260,8 @@ function reportScreen(d) {
     for (const assignment of d.assignments.filter(
       (x) => en && x.classroom === en.class_id,
     )) {
-      const evals = d.evaluations.filter(
-        (x) =>
-          x.assignment === assignment.id &&
-          x.period === reportPeriod &&
-          x.published,
-      );
-      let subtotal = 0,
-        weights = 0;
-      for (const grade of d.grades) {
-        const evaluation = evals.find((x) => x.id === grade.evaluation);
-        if (
-          !evaluation ||
-          grade.student !== studentId ||
-          grade.status !== "graded"
-        )
-          continue;
-        subtotal += (grade.score / evaluation.maximum) * 20 * evaluation.weight;
-        weights += evaluation.weight;
-      }
+      const total = index.totalsByStudent.get(studentId)?.get(assignment.id + ":" + reportPeriod);
+      const subtotal = total?.weighted || 0, weights = total?.weights || 0;
       if (!weights) continue;
       const previous = subjects.get(assignment.subject) || {
         sum: 0,
@@ -1304,6 +1344,10 @@ function reportScreen(d) {
   )}<div class="report-summary"><article><span>Moyenne générale</span><strong>${general} <small>/20</small></strong></article>${rankInfo}${mentionInfo}</div>${preferences.showComment ? `<section class="report-comment"><h3>Appréciation générale</h3><p class="prewrap">${esc(comment || "Aucune appréciation renseignée.")}</p></section>` : ""}<div class="report-signatures"><div>Le / La responsable légal(e)<span></span></div><div>La direction<span></span></div></div><p class="document-footnote">Bulletin établi par ${esc(d.school.name)}. Les absences et dispenses sont exclues du calcul des moyennes.</p></section>`;
 }
 document.addEventListener("click", async (event) => {
+  if (event.target.closest("#retry-school-load")) {
+    await schoolWorkspace();
+    return;
+  }
   const cancelSlotEdit = event.target.closest("[data-cancel-slot-edit]");
   if (cancelSlotEdit) {
     const form = cancelSlotEdit.closest('form[data-operation="timetable"]');
@@ -1431,16 +1475,29 @@ document.addEventListener("click", async (event) => {
     latestData = schoolData;
     printReceipt(familyReceipt.dataset.familyReceipt);
   }
-  if (event.target.closest("#export-school-json")) {
-    const blob = new Blob([JSON.stringify(schoolData, null, 2)], {
-        type: "application/json",
-      }),
-      url = URL.createObjectURL(blob),
-      a = document.createElement("a");
-    a.href = url;
-    a.download = "etudia-export-" + today() + ".json";
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const exportButton = event.target.closest("#export-school-json");
+  if (exportButton) {
+    const exportUser = currentUser?.id, exportToken = authToken;
+    exportButton.disabled = true;
+    try {
+      // Module state intentionally omits unrelated collections. Export the full
+      // authorized state explicitly, rather than silently exporting an excerpt.
+      const completeData = await pb("etudia/state");
+      if (currentUser?.id !== exportUser || authToken !== exportToken) return;
+      const blob = new Blob([JSON.stringify(completeData, null, 2)], { type: "application/json" }),
+        url = URL.createObjectURL(blob),
+        link = document.createElement("a");
+      link.href = url;
+      link.download = "etudia-export-" + today() + ".json";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      notify("Export complet téléchargé.");
+    } catch (error) {
+      notify("Export impossible : " + error.message);
+    } finally {
+      exportButton.disabled = false;
+    }
+    return;
   }
   const printButton = event.target.closest("#print-report, #print-timetable");
   if (printButton) {

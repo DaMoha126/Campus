@@ -79,7 +79,7 @@ function pack(r, keys) {
   for (const key of keys) out[key] = r.get(key);
   return out;
 }
-function all(app, name, school, keys) {
+function all(app, name, school, keys, scope = {}) {
   return app
     .findRecordsByFilter(
       name,
@@ -90,13 +90,28 @@ function all(app, name, school, keys) {
       name === "academic_years" ||
       name === "subjects"
         ? "establishment_id"
-        : "school") + " = {:school}",
+        : "school") + " = {:school}" + (scope.condition ? " && (" + scope.condition + ")" : ""),
       "",
       0,
       0,
-      { school },
+      { ...(scope.params || {}), school },
     )
     .map((r) => pack(r, keys));
+}
+// Every scoped query retains all()'s mandatory establishment predicate.
+function recordScope(field, ids, prefix) {
+  const unique = [...new Set(ids)], params = {};
+  if (!unique.length) return { condition: "id=''", params };
+  const terms = unique.map((id, index) => {
+    const key = prefix + index;
+    params[key] = id;
+    return field + "={:" + key + "}";
+  });
+  return { condition: terms.join(" || "), params };
+}
+function joinScopes(...scopes) {
+  const active = scopes.filter((scope) => scope && scope.condition);
+  return { condition: active.map((scope) => "(" + scope.condition + ")").join(" && "), params: Object.assign({}, ...active.map((scope) => scope.params || {})) };
 }
 function actor(app, auth) {
   const r = app.findRecordById("school_users", auth.id);
@@ -193,7 +208,21 @@ function log(app, a, action, entity, id, summary = "") {
     summary: summary.slice(0, 2000),
   });
 }
-function state(app, auth) {
+const statePages = {
+  overview: ["homework", "attendance", "announcements"],
+  grades: ["evaluations", "grades"],
+  reports: ["evaluations", "grades", "reportComments", "reportRanks"],
+  homework: ["homework", "submissions"],
+  lessons: ["lessons"], timetable: ["timetable"],
+  attendance: ["attendance", "absenceRequests"],
+  announcements: ["announcements"], messages: ["messages"],
+  finances: ["payments", "reversals", "deadlines"],
+  settings: ["audit"], classes: [], setup: [],
+};
+function state(app, auth, options = {}) {
+  const page = options.page || "";
+  if (page && !Object.prototype.hasOwnProperty.call(statePages, page)) bad("Module invalide.");
+  const wants = (key) => !page || statePages[page].includes(key);
   const a = actor(app, auth),
     isDirection = a.role === "administrator",
     isRegistrar = a.role === "school_life",
@@ -201,6 +230,7 @@ function state(app, auth) {
     isStaff = staffRoles.includes(a.role),
     canSeeSchoolDirectory = isDirection || isRegistrar;
   const d = {};
+  const unreadCount = () => app.countRecords("school_messages", $dbx.hashExp({ school: a.school, recipient: a.id, read: false }));
   d.school = pack(app.findRecordById("establishments", a.school), [
     "name",
     "country",
@@ -268,26 +298,28 @@ function state(app, auth) {
       : enrollments
           .filter((x) => students.includes(x.student_id))
           .flatMap((x) => [x.class_id, ...(x.previous_classes || [])]);
+  const classroomIdSet = new Set(classroomIds);
   if (a.role === "teacher")
     students = enrollments
       .filter((x) =>
         [x.class_id, ...(x.previous_classes || [])].some((c) =>
-          classroomIds.includes(c),
+          classroomIdSet.has(c),
         ),
       )
       .map((x) => x.student_id);
+  const studentIdSet = new Set(students);
   if (!isStaff)
     enrollments = enrollments.filter(
       (x) =>
-        students.includes(x.student_id) &&
+        studentIdSet.has(x.student_id) &&
         (a.role !== "teacher" ||
           [x.class_id, ...(x.previous_classes || [])].some((c) =>
-            classroomIds.includes(c),
+            classroomIdSet.has(c),
           )),
     );
   if (!isStaff && a.role !== "teacher")
-    assignments = assignments.filter((x) => classroomIds.includes(x.classroom));
-  d.classes = classes.filter((x) => classroomIds.includes(x.id));
+    assignments = assignments.filter((x) => classroomIdSet.has(x.classroom));
+  d.classes = classes.filter((x) => classroomIdSet.has(x.id));
   d.assignments = assignments;
   d.enrollments = enrollments;
   if (a.role === "teacher")
@@ -304,7 +336,7 @@ function state(app, auth) {
         a.role === "parent"
           ? x.parent === a.id
           : a.role === "teacher"
-            ? students.includes(x.student)
+            ? studentIdSet.has(x.student)
             : false,
       );
   const contactIds = [
@@ -314,10 +346,11 @@ function state(app, auth) {
     ...d.links.map((x) => x.parent),
     ...users.filter((x) => staffRoles.includes(x.role)).map((x) => x.id),
   ];
+  const contactIdSet = new Set(contactIds);
   d.people = isStaff
     ? users.filter((x) => !x.disabled).map(({ disabled, ...x }) => x)
     : users
-        .filter((x) => contactIds.includes(x.id) && !x.disabled)
+        .filter((x) => contactIdSet.has(x.id) && !x.disabled)
         .map(({ disabled, ...x }) => x);
   if (isAccountant) {
     d.assignments = [];
@@ -332,13 +365,13 @@ function state(app, auth) {
     d.submissions = [];
     d.absenceRequests = [];
     d.announcements = [];
-    d.messages = all(
+    d.messages = wants("messages") ? all(
       app,
       "school_messages",
       a.school,
       fields.school_messages,
-    ).filter((x) => x.sender === a.id || x.recipient === a.id);
-    d.payments = all(app, "payments", a.school, [
+    ).filter((x) => x.sender === a.id || x.recipient === a.id) : [];
+    d.payments = wants("payments") ? all(app, "payments", a.school, [
       "enrollment_id",
       "amount",
       "paid_on",
@@ -346,153 +379,147 @@ function state(app, auth) {
       "reference",
       "recorded_by",
       "created",
-    ]);
-    const paymentIds = d.payments.map((x) => x.id);
-    d.reversals = all(
+    ]) : [];
+    const paymentIds = new Set(d.payments.map((x) => x.id));
+    d.reversals = wants("reversals") ? all(
       app,
       "payment_reversals",
       a.school,
       fields.payment_reversals,
-    ).filter((x) => paymentIds.includes(x.payment));
-    d.deadlines = all(
+    ).filter((x) => paymentIds.has(x.payment)) : [];
+    d.deadlines = wants("deadlines") ? all(
       app,
       "payment_deadlines",
       a.school,
       fields.payment_deadlines,
-    );
+    ) : [];
+    d.reportRanks = [];
     d.reportComments = [];
     d.audit = [];
+    d.unreadMessageCount = unreadCount();
     return d;
   }
-  const assignmentIds = assignments.map((x) => x.id);
+  const assignmentIds = new Set(assignments.map((x) => x.id)),
+    subjectIds = new Set(assignments.map((x) => x.subject));
+  const assignmentScope = (prefix) => isStaff ? {} : a.role === "teacher"
+    ? { condition: prefix + "teacher={:stateTeacher}", params: { stateTeacher: a.id } }
+    : recordScope(prefix + "classroom", classroomIds, "stateClass");
   d.subjects = all(app, "subjects", a.school, ["name"]).filter(
-    (x) => isDirection || assignments.some((y) => y.subject === x.id),
+    (x) => isDirection || subjectIds.has(x.id),
   );
   d.periods = all(app, "school_periods", a.school, fields.school_periods);
-  d.evaluations = all(app, "evaluations", a.school, fields.evaluations).filter(
-    (x) =>
-      (isStaff || assignmentIds.includes(x.assignment)) &&
-      (isStaff || a.role === "teacher" || x.published),
-  );
-  d.grades = all(app, "school_grades", a.school, fields.school_grades).filter(
-    (x) =>
-      d.evaluations.some((y) => y.id === x.evaluation) &&
-      (isStaff || students.includes(x.student)),
-  );
-  if (a.role === "parent" || a.role === "student") {
-    const visibleStudentIds = students;
-    const allGrades = all(app, "school_grades", a.school, fields.school_grades);
-    d.reportRanks = [];
+  const family = a.role === "parent" || a.role === "student";
+  const publicationScope = family ? { condition: "published=true" } : {};
+  d.evaluations = wants("evaluations") ? all(app, "evaluations", a.school, fields.evaluations,
+    joinScopes(assignmentScope("assignment."), publicationScope)).filter(
+      (x) => (isStaff || assignmentIds.has(x.assignment)) && (isStaff || a.role === "teacher" || x.published),
+    ) : [];
+  const evaluationById = new Map(d.evaluations.map((evaluation) => [evaluation.id, evaluation]));
+  // Families need classmates' published grades to derive rank, never to expose them.
+  // Fetch that bounded class scope once; use the visible-pupil set for the payload.
+  const allGrades = wants("grades") ? all(app, "school_grades", a.school, fields.school_grades,
+    joinScopes(assignmentScope("evaluation.assignment."), family ? { condition: "evaluation.published=true" } : {}, family && !wants("reportRanks") ? recordScope("student", students, "stateStudent") : {})) : [];
+  d.grades = allGrades.filter((grade) => evaluationById.has(grade.evaluation) && (isStaff || studentIdSet.has(grade.student)));
+  d.reportRanks = [];
+  if (family && wants("reportRanks")) {
+    const assignmentById = new Map(assignments.map((assignment) => [assignment.id, assignment])),
+      totalsByStudent = new Map(), classAssignments = new Map(), rosters = new Map(), periodsByYear = new Map();
+    for (const assignment of assignments) {
+      if (!classAssignments.has(assignment.classroom)) classAssignments.set(assignment.classroom, []);
+      classAssignments.get(assignment.classroom).push(assignment);
+    }
+    for (const enrollment of allEnrollments) {
+      const key = enrollment.class_id + ":" + enrollment.academic_year_id;
+      if (!rosters.has(key)) rosters.set(key, []);
+      rosters.get(key).push(enrollment);
+    }
+    for (const period of d.periods) {
+      if (!periodsByYear.has(period.year)) periodsByYear.set(period.year, []);
+      periodsByYear.get(period.year).push(period);
+    }
+    // One traversal of grades replaces a full scan per pupil, assignment and term.
+    for (const grade of allGrades) {
+      if (grade.status !== "graded") continue;
+      const evaluation = evaluationById.get(grade.evaluation);
+      if (!evaluation || !assignmentById.has(evaluation.assignment)) continue;
+      if (!totalsByStudent.has(grade.student)) totalsByStudent.set(grade.student, new Map());
+      const totals = totalsByStudent.get(grade.student), key = evaluation.assignment + ":" + evaluation.period,
+        previous = totals.get(key) || { weighted: 0, weights: 0 };
+      previous.weighted += (grade.score / evaluation.maximum) * 20 * evaluation.weight;
+      previous.weights += evaluation.weight;
+      totals.set(key, previous);
+    }
+    const averagesByClassPeriod = new Map();
     for (const enrollment of enrollments) {
-      if (!visibleStudentIds.includes(enrollment.student_id)) continue;
-      for (const period of d.periods.filter(
-        (x) => x.year === enrollment.academic_year_id,
-      )) {
-        const classAssignments = assignments.filter(
-          (x) => x.classroom === enrollment.class_id,
-        );
-        const classEvaluations = d.evaluations.filter((x) =>
-          classAssignments.some((y) => y.id === x.assignment),
-        );
-        const roster = allEnrollments.filter(
-          (x) =>
-            x.class_id === enrollment.class_id &&
-            x.academic_year_id === enrollment.academic_year_id,
-        );
-        const averages = [];
-        for (const peer of roster) {
-          const bySubject = new Map();
-          for (const assignment of classAssignments) {
-            const evals = classEvaluations.filter(
-              (x) => x.assignment === assignment.id && x.period === period.id,
-            );
-            let weighted = 0,
-              weights = 0;
-            for (const grade of allGrades) {
-              const evaluation = evals.find((x) => x.id === grade.evaluation);
-              if (
-                !evaluation ||
-                grade.student !== peer.student_id ||
-                grade.status !== "graded"
-              )
-                continue;
-              weighted +=
-                (grade.score / evaluation.maximum) * 20 * evaluation.weight;
-              weights += evaluation.weight;
-            }
-            if (weights) {
-              const previous = bySubject.get(assignment.subject) || {
-                sum: 0,
-                weight: 0,
-                coefficient: assignment.coefficient,
-              };
-              previous.sum += (weighted / weights) * assignment.coefficient;
+      if (!studentIdSet.has(enrollment.student_id)) continue;
+      for (const period of periodsByYear.get(enrollment.academic_year_id) || []) {
+        const rosterKey = enrollment.class_id + ":" + enrollment.academic_year_id,
+          key = rosterKey + ":" + period.id;
+        if (!averagesByClassPeriod.has(key)) {
+          const averages = [];
+          for (const peer of rosters.get(rosterKey) || []) {
+            const totals = totalsByStudent.get(peer.student_id), bySubject = new Map();
+            if (!totals) continue;
+            for (const assignment of classAssignments.get(enrollment.class_id) || []) {
+              const total = totals.get(assignment.id + ":" + period.id);
+              if (!total || !total.weights) continue;
+              const previous = bySubject.get(assignment.subject) || { sum: 0, weight: 0 };
+              previous.sum += (total.weighted / total.weights) * assignment.coefficient;
               previous.weight += assignment.coefficient;
               bySubject.set(assignment.subject, previous);
             }
+            let sum = 0, weight = 0;
+            for (const value of bySubject.values()) { sum += value.sum; weight += value.weight; }
+            if (weight) averages.push({ student: peer.student_id, average: sum / weight });
           }
-          let sum = 0,
-            weight = 0;
-          for (const value of bySubject.values()) {
-            sum += value.sum;
-            weight += value.weight;
-          }
-          if (weight)
-            averages.push({ student: peer.student_id, average: sum / weight });
+          averagesByClassPeriod.set(key, averages);
         }
-        const ownAverage = averages.find(
-          (x) => x.student === enrollment.student_id,
-        );
+        const averages = averagesByClassPeriod.get(key), ownAverage = averages.find((x) => x.student === enrollment.student_id);
         if (!ownAverage) continue;
-        d.reportRanks.push({
-          student: enrollment.student_id,
-          period: period.id,
-          rank:
-            1 +
-            averages.filter((x) => x.average > ownAverage.average + 1e-9)
-              .length,
-          class_size: averages.length,
-        });
+        d.reportRanks.push({ student: enrollment.student_id, period: period.id,
+          rank: 1 + averages.filter((x) => x.average > ownAverage.average + 1e-9).length,
+          class_size: averages.length });
       }
     }
-  } else d.reportRanks = [];
+  }
   for (const [name, key] of [
     ["homework", "homework"],
     ["lesson_log", "lessons"],
     ["timetable_slots", "timetable"],
     ["attendance", "attendance"],
   ])
-    d[key] = all(app, name, a.school, fields[name]).filter(
+    d[key] = wants(key) ? all(app, name, a.school, fields[name], joinScopes(assignmentScope("assignment."), name === "attendance" && family ? recordScope("student", students, "stateStudent") : {})).filter(
       (x) =>
-        (isStaff || assignmentIds.includes(x.assignment)) &&
-        (name !== "attendance" || isStaff || students.includes(x.student)),
-    );
-  d.submissions = all(app, "submissions", a.school, fields.submissions).filter(
+        (isStaff || assignmentIds.has(x.assignment)) &&
+        (name !== "attendance" || isStaff || studentIdSet.has(x.student)),
+    ) : [];
+  const homeworkIds = new Set(d.homework.map((x) => x.id));
+  d.submissions = wants("submissions") ? all(app, "submissions", a.school, fields.submissions, joinScopes(assignmentScope("homework.assignment."), family ? recordScope("student", students, "stateStudent") : {})).filter(
     (x) =>
-      d.homework.some((y) => y.id === x.homework) &&
-      (isStaff || a.role === "teacher" || students.includes(x.student)),
-  );
-  d.absenceRequests = all(
+      homeworkIds.has(x.homework) &&
+      (isStaff || a.role === "teacher" || studentIdSet.has(x.student)),
+  ) : [];
+  const attendanceIds = new Set(d.attendance.map((x) => x.id));
+  d.absenceRequests = wants("absenceRequests") ? all(
     app,
     "absence_requests",
     a.school,
     fields.absence_requests,
-  ).filter((x) => d.attendance.some((y) => y.id === x.attendance));
-  d.announcements = all(
+    joinScopes(assignmentScope("attendance.assignment."), family ? recordScope("attendance.student", students, "stateStudent") : {}),
+  ).filter((x) => attendanceIds.has(x.attendance)) : [];
+  d.announcements = wants("announcements") ? all(
     app,
     "school_announcements",
     a.school,
     fields.school_announcements,
-  ).filter((x) => isStaff || x.audience === "all" || x.audience === a.role);
-  d.messages = all(
-    app,
-    "school_messages",
-    a.school,
-    fields.school_messages,
-  ).filter((x) => x.sender === a.id || x.recipient === a.id);
-  const enrollmentIds = d.enrollments.map((x) => x.id);
+  ).filter((x) => isStaff || x.audience === "all" || x.audience === a.role) : [];
+  d.messages = wants("messages") ? all(
+    app, "school_messages", a.school, fields.school_messages,
+    { condition: "sender={:stateActor} || recipient={:stateActor}", params: { stateActor: a.id } },
+  ).filter((x) => x.sender === a.id || x.recipient === a.id) : [];
+  const enrollmentIds = new Set(d.enrollments.map((x) => x.id));
   d.payments =
-    a.role === "teacher" || isRegistrar
+    !wants("payments") || a.role === "teacher" || isRegistrar
       ? []
       : all(app, "payments", a.school, [
           "enrollment_id",
@@ -502,30 +529,31 @@ function state(app, auth) {
           "reference",
           "recorded_by",
           "created",
-        ]).filter((x) => enrollmentIds.includes(x.enrollment_id));
-  const paymentIds = d.payments.map((x) => x.id);
-  d.reversals = all(
+        ], family ? recordScope("enrollment_id.student_id", students, "stateStudent") : {}).filter((x) => enrollmentIds.has(x.enrollment_id));
+  const paymentIds = new Set(d.payments.map((x) => x.id));
+  d.reversals = wants("reversals") ? all(
     app,
     "payment_reversals",
     a.school,
     fields.payment_reversals,
-  ).filter((x) => paymentIds.includes(x.payment));
-  d.deadlines = all(
+  ).filter((x) => paymentIds.has(x.payment)) : [];
+  d.deadlines = wants("deadlines") && (isDirection || isAccountant) ? all(
     app,
     "payment_deadlines",
     a.school,
     fields.payment_deadlines,
   ).filter(
     (x) =>
-      (isDirection || isAccountant) && enrollmentIds.includes(x.enrollment),
-  );
-  d.reportComments = all(
+      (isDirection || isAccountant) && enrollmentIds.has(x.enrollment),
+  ) : [];
+  d.reportComments = wants("reportComments") ? all(
     app,
     "report_comments",
     a.school,
     fields.report_comments,
-  ).filter((x) => isStaff || students.includes(x.student));
-  d.audit = isDirection
+    !isStaff ? recordScope("student", students, "stateStudent") : {},
+  ).filter((x) => isStaff || studentIdSet.has(x.student)) : [];
+  d.audit = wants("audit") && isDirection
     ? app
         .findRecordsByFilter(
           "school_audit",
@@ -537,6 +565,7 @@ function state(app, auth) {
         )
         .map((x) => pack(x, [...fields.school_audit, "created"]))
     : [];
+  d.unreadMessageCount = unreadCount();
   return d;
 }
 function action(app, auth, b) {
@@ -1141,7 +1170,7 @@ function action(app, auth, b) {
         break;
       }
       case "message": {
-        const visible = state(tx, auth),
+        const visible = state(tx, auth, { page: "classes" }),
           recipient = own(tx, "school_users", data.recipient, a);
         if (
           recipient.getBool("disabled") ||
