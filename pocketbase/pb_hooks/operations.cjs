@@ -102,6 +102,9 @@ function all(app, name, school, keys, scope = {}) {
 function recordScope(field, ids, prefix) {
   const unique = [...new Set(ids)], params = {};
   if (!unique.length) return { condition: "id=''", params };
+  // Large directories must not exceed SQLite's expression-depth limit.
+  // Callers still apply their role/ownership checks to every returned row.
+  if (unique.length > 300) return { condition: "id!=''", params };
   const terms = unique.map((id, index) => {
     const key = prefix + index;
     params[key] = id;
@@ -228,7 +231,8 @@ function state(app, auth, options = {}) {
     isRegistrar = a.role === "school_life",
     isAccountant = a.role === "accountant",
     isStaff = staffRoles.includes(a.role),
-    canSeeSchoolDirectory = isDirection || isRegistrar;
+    canSeeSchoolDirectory = isDirection || isRegistrar,
+    family = a.role === "parent" || a.role === "student";
   const d = {};
   const unreadCount = () => app.countRecords("school_messages", $dbx.hashExp({ school: a.school, recipient: a.id, read: false }));
   d.school = pack(app.findRecordById("establishments", a.school), [
@@ -250,13 +254,6 @@ function state(app, auth, options = {}) {
     finance: isDirection || isAccountant,
     academics: isDirection,
   };
-  const users = all(app, "school_users", a.school, [
-    "first_name",
-    "last_name",
-    "role",
-    "disabled",
-    ...(canSeeSchoolDirectory ? ["phone", "login_id"] : []),
-  ]);
   d.years = all(app, "academic_years", a.school, [
     "label",
     "starts_on",
@@ -268,6 +265,9 @@ function state(app, auth, options = {}) {
     "academic_year_id",
     "capacity",
   ]);
+  const links = a.role === "student" ? [] : all(app, "parent_links", a.school, fields.parent_links,
+    a.role === "parent" ? { condition: "parent={:stateParent}", params: { stateParent: a.id } } : {});
+  let students = a.role === "parent" ? links.map(x => x.student) : a.role === "student" ? [a.id] : [];
   let enrollments = all(app, "enrollments", a.school, [
     "student_id",
     "class_id",
@@ -276,19 +276,14 @@ function state(app, auth, options = {}) {
     "registration_fee",
     "tuition_fee",
     "previous_classes",
-  ]);
-  const allEnrollments = enrollments.slice();
-  const links = all(app, "parent_links", a.school, fields.parent_links);
+  ], family ? recordScope("student_id", students, "stateStudent") : {});
+  let allEnrollments = enrollments;
   let assignments = all(
     app,
     "teaching_assignments",
     a.school,
     fields.teaching_assignments,
   );
-  let students = [];
-  if (a.role === "parent")
-    students = links.filter((x) => x.parent === a.id).map((x) => x.student);
-  if (a.role === "student") students = [a.id];
   if (a.role === "teacher")
     assignments = assignments.filter((x) => x.teacher === a.id);
   const classroomIds = isStaff
@@ -299,6 +294,9 @@ function state(app, auth, options = {}) {
           .filter((x) => students.includes(x.student_id))
           .flatMap((x) => [x.class_id, ...(x.previous_classes || [])]);
   const classroomIdSet = new Set(classroomIds);
+  if (family && wants("reportRanks"))
+    allEnrollments = all(app, "enrollments", a.school, ["student_id", "class_id", "academic_year_id"],
+      recordScope("class_id", enrollments.map(x => x.class_id), "stateRosterClass"));
   if (a.role === "teacher")
     students = enrollments
       .filter((x) =>
@@ -339,13 +337,21 @@ function state(app, auth, options = {}) {
             ? studentIdSet.has(x.student)
             : false,
       );
-  const contactIds = [
+  const visibleContactIds = [
     a.id,
     ...students,
     ...assignments.map((x) => x.teacher),
     ...d.links.map((x) => x.parent),
-    ...users.filter((x) => staffRoles.includes(x.role)).map((x) => x.id),
   ];
+  const contactScope = recordScope("id", visibleContactIds, "stateContact");
+  const users = all(app, "school_users", a.school, [
+    "first_name", "last_name", "role", "disabled",
+    ...(canSeeSchoolDirectory ? ["phone", "login_id"] : []),
+  ], isStaff ? {} : {
+    condition: "role='administrator' || role='school_life' || role='accountant' || (" + contactScope.condition + ")",
+    params: contactScope.params,
+  });
+  const contactIds = [...visibleContactIds, ...users.filter(x => staffRoles.includes(x.role)).map(x => x.id)];
   const contactIdSet = new Set(contactIds);
   d.people = isStaff
     ? users.filter((x) => !x.disabled).map(({ disabled, ...x }) => x)
@@ -408,17 +414,38 @@ function state(app, auth, options = {}) {
     (x) => isDirection || subjectIds.has(x.id),
   );
   d.periods = all(app, "school_periods", a.school, fields.school_periods);
-  const family = a.role === "parent" || a.role === "student";
+  let academicClassIds = null;
+  if (options.classroom && (page === "grades" || page === "reports")) {
+    if (page === "grades") {
+      const classroom = options.classroom === "auto"
+        ? d.classes.find(c => d.years.some(y => y.id === c.academic_year_id && y.is_active)) || d.classes[0]
+        : d.classes.find(c => c.id === options.classroom);
+      if (!classroom && options.classroom !== "auto") forbid();
+      academicClassIds = classroom ? [classroom.id] : [];
+      d.academicScope = { classroom: classroom?.id || "" };
+    } else {
+      const pupil = d.people.find(p => p.role === "student" && p.id === options.student) || d.people.find(p => p.role === "student");
+      const period = d.periods.find(p => p.id === options.period) || d.periods[0];
+      const enrollment = d.enrollments.find(e => e.student_id === pupil?.id && e.academic_year_id === period?.year);
+      const roster = enrollment ? allEnrollments.filter(e => e.class_id === enrollment.class_id && e.academic_year_id === enrollment.academic_year_id) : [];
+      // Include transfer history for every pupil when batch-printing this class.
+      // The visible enrollments preserve that history for staff; families only print their children.
+      academicClassIds = enrollment ? [...new Set([enrollment.class_id, ...(enrollment.previous_classes || []), ...roster.flatMap(e => e.previous_classes || [])])] : [];
+      d.academicScope = { classroom: enrollment?.class_id || "", student: pupil?.id || "", period: period?.id || "" };
+    }
+  }
+  const academicScope = prefix => academicClassIds === null ? {} : recordScope(prefix + "classroom", academicClassIds, "stateAcademicClass");
+  const academicAssignments = academicClassIds === null ? null : new Set(assignments.filter(x => academicClassIds.includes(x.classroom)).map(x => x.id));
   const publicationScope = family ? { condition: "published=true" } : {};
   d.evaluations = wants("evaluations") ? all(app, "evaluations", a.school, fields.evaluations,
-    joinScopes(assignmentScope("assignment."), publicationScope)).filter(
-      (x) => (isStaff || assignmentIds.has(x.assignment)) && (isStaff || a.role === "teacher" || x.published),
+    joinScopes(assignmentScope("assignment."), academicScope("assignment."), publicationScope)).filter(
+      (x) => (isStaff || assignmentIds.has(x.assignment)) && (!academicAssignments || academicAssignments.has(x.assignment)) && (isStaff || a.role === "teacher" || x.published),
     ) : [];
   const evaluationById = new Map(d.evaluations.map((evaluation) => [evaluation.id, evaluation]));
   // Families need classmates' published grades to derive rank, never to expose them.
   // Fetch that bounded class scope once; use the visible-pupil set for the payload.
   const allGrades = wants("grades") ? all(app, "school_grades", a.school, fields.school_grades,
-    joinScopes(assignmentScope("evaluation.assignment."), family ? { condition: "evaluation.published=true" } : {}, family && !wants("reportRanks") ? recordScope("student", students, "stateStudent") : {})) : [];
+    joinScopes(assignmentScope("evaluation.assignment."), academicScope("evaluation.assignment."), family ? { condition: "evaluation.published=true" } : {}, family && !wants("reportRanks") ? recordScope("student", students, "stateStudent") : {})) : [];
   d.grades = allGrades.filter((grade) => evaluationById.has(grade.evaluation) && (isStaff || studentIdSet.has(grade.student)));
   d.reportRanks = [];
   if (family && wants("reportRanks")) {

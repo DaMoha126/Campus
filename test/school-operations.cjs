@@ -1172,6 +1172,23 @@ test(
         }
         for (const page of ["__proto__", "constructor", "unknown", "reports || true", "../settings"])
           assert.equal((await req("etudia/state?page=" + encodeURIComponent(page), undefined, tokens.student)).status, 400);
+        const fullAdmin = ok(await state(tokens.admin));
+        for (const classroom of fullAdmin.classes) {
+          const scoped = ok(await req("etudia/state?page=grades&classroom=" + classroom.id, undefined, tokens.admin));
+          const assignments = new Set(fullAdmin.assignments.filter(x => x.classroom === classroom.id).map(x => x.id));
+          const evaluations = fullAdmin.evaluations.filter(x => assignments.has(x.assignment));
+          const ids = new Set(evaluations.map(x => x.id));
+          assert.deepEqual(canonical(scoped.evaluations), canonical(evaluations));
+          assert.deepEqual(canonical(scoped.grades), canonical(fullAdmin.grades.filter(x => ids.has(x.evaluation))));
+          assert.equal(scoped.academicScope.classroom, classroom.id);
+        }
+        const fullStudent = ok(await state(tokens.student));
+        const inaccessible = fullAdmin.classes.find(x => !fullStudent.classes.some(y => y.id === x.id));
+        assert.ok(inaccessible);
+        assert.equal((await req("etudia/state?page=grades&classroom=" + inaccessible.id, undefined, tokens.student)).status, 403);
+        const familyReport = ok(await req("etudia/state?page=reports&classroom=auto&student=" + users.admin.id, undefined, tokens.student));
+        assert.equal(familyReport.academicScope.student, users.student.id);
+        assert.ok(familyReport.grades.every(x => x.student === users.student.id));
         assert.equal((await req("etudia/state?page=reports")).status, 401);
       });
 

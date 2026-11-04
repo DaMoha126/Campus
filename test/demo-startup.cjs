@@ -244,6 +244,7 @@ test(
           const expected = admin.people.filter((p) =>
             studentIds.includes(p.id),
           );
+          await page.waitForFunction(() => schoolData && document.querySelector("#app").getAttribute("aria-busy") !== "true");
           const shownNames = await page
             .locator("#grade-groups .student-name")
             .allTextContents();

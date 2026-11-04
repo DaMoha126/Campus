@@ -94,9 +94,19 @@ async function schoolWorkspace() {
   if (content) content.innerHTML = loading;
   else app.innerHTML = loading;
   try {
-    const d = await pb("etudia/state?page=" + encodeURIComponent(requestedPage));
+    let scope = "";
+    if (requestedPage === "grades" && gradesClass !== "")
+      scope = "&classroom=" + encodeURIComponent(gradesClass || "auto");
+    if (requestedPage === "reports")
+      scope = "&classroom=auto&student=" + encodeURIComponent(reportStudent || "") + "&period=" + encodeURIComponent(reportPeriod || "");
+    const d = await pb("etudia/state?page=" + encodeURIComponent(requestedPage) + scope);
     if (requestId !== schoolLoadId || currentUser?.id !== userId) return false;
     schoolData = d;
+    if (requestedPage === "grades" && d.academicScope) gradesClass = d.academicScope.classroom;
+    if (requestedPage === "reports" && d.academicScope) {
+      reportStudent = d.academicScope.student;
+      reportPeriod = d.academicScope.period;
+    }
     const admin = d.me.role === "administrator",
       schoolLife = d.permissions?.schoolLife,
       finance = d.permissions?.finance || ["parent", "student"].includes(d.me.role);
@@ -1554,6 +1564,9 @@ document.addEventListener("change", async (event) => {
       gradesClass = event.target.value;
       gradesSubject = "";
       gradesPeriod = null;
+      schoolEval = "";
+      await schoolWorkspace();
+      return;
     }
     if (filters[event.target.id] === "subject")
       gradesSubject = event.target.value;

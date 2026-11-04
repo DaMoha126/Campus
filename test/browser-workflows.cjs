@@ -524,6 +524,7 @@ test(
         ),
       );
       await page.locator("#grades-class").selectOption("");
+      await page.waitForFunction(() => schoolData && gradesClass === "" && !schoolData.academicScope);
       assert.equal(await page.locator("[data-grade-class]").count(), 2);
       await page.screenshot({
         path: "/tmp/etudia-notes-classe-matiere.png",
@@ -943,7 +944,7 @@ test(
       assert.deepEqual(exported.payments, complete.payments);
 
       // A failed module load must remove stale data and support retry.
-      await page.route("**/api/etudia/state?page=grades", (route) => route.fulfill({
+      await page.route("**/api/etudia/state?page=grades*", (route) => route.fulfill({
         status: 503, contentType: "application/json", body: JSON.stringify({ message: "Indisponibilité de test" }),
       }), { times: 1 });
       await page.locator('[data-school-page="grades"]').click();
@@ -959,7 +960,7 @@ test(
       const release = new Promise((resolve) => { releaseResponse = resolve; });
       let requestStarted;
       const started = new Promise((resolve) => { requestStarted = resolve; });
-      await page.route("**/api/etudia/state?page=reports", async (route) => {
+      await page.route("**/api/etudia/state?page=reports*", async (route) => {
         const response = await route.fetch();
         requestStarted();
         await release;
@@ -969,7 +970,7 @@ test(
       await started;
       await page.locator('[data-page="enrollments"]').click();
       await page.getByRole("heading", { name: "Inscriptions & paiements", exact: true }).waitFor();
-      const lateResponse = page.waitForResponse((response) => response.url().endsWith("/api/etudia/state?page=reports"));
+      const lateResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/etudia/state" && new URL(response.url()).searchParams.get("page") === "reports");
       releaseResponse();
       await lateResponse;
       await page.evaluate(() => new Promise(requestAnimationFrame));

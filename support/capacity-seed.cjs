@@ -3,16 +3,23 @@ exports.seed = function (app, config) {
   if (app.findAllRecords('establishments').length) throw Error('Capacity seed requires an empty isolated database');
   if (!config || typeof config.password !== 'string' || config.password.length < 24) throw Error('Capacity seed requires a generated password');
   const manifest = [];
+  // All disposable accounts deliberately share one generated password. Reuse
+  // its real bcrypt hash rather than rehashing it thousands of times at setup.
+  let passwordHash;
   app.runInTransaction((tx) => {
     const collections = {};
     const save = (name, values) => {
       const c = collections[name] || (collections[name] = tx.findCollectionByNameOrId(name));
       const r = new Record(c);
       for (const key of Object.keys(values)) {
-        if (key === 'password') r.setPassword(values[key]);
+        if (key === 'password') {
+          if (passwordHash) r.setRaw('password', passwordHash);
+          else r.setPassword(values[key]);
+        }
         else r.set(key, values[key]);
       }
       tx.save(r);
+      if (name === 'school_users' && !passwordHash) passwordHash = r.getRaw('password');
       return r;
     };
     for (let n = 1; n <= 2; n++) {
