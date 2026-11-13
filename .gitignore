@@ -3,3 +3,7 @@ work/
 *.log
 .DS_Store
 server/data/
+
+node_modules/
+backup-admin-*/
+
