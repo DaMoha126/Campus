@@ -8,9 +8,9 @@ module.exports = function (app, school, evaluations, students) {
   const params = { school, evaluations: JSON.stringify(evaluationIds) };
   if (students) params.students = JSON.stringify([...new Set(students)]);
   const studentCondition = students ? `
-    AND student IN (SELECT value FROM json_each({:students}))
+    AND grade.student IN (SELECT value FROM json_each({:students}))
     AND EXISTS (SELECT 1 FROM evaluations published
-      WHERE published.id = school_grades.evaluation
+      WHERE published.id = grade.evaluation
         AND published.school = {:school} AND published.published = 1)
   ` : "";
   const row = new DynamicModel({ payload: "" });
@@ -20,10 +20,11 @@ module.exports = function (app, school, evaluations, students) {
       'score', g.score, 'status', g.status, 'comment', g.comment
     )), '[]') AS payload
     FROM (
-      SELECT id, evaluation, student, score, status, comment
-      FROM school_grades
-      WHERE school = {:school} AND evaluation IN (SELECT value FROM json_each({:evaluations}))${studentCondition}
-      ORDER BY rowid
+      SELECT grade.id, grade.evaluation, grade.student, grade.score, grade.status, grade.comment
+      FROM json_each({:evaluations}) selected
+      CROSS JOIN school_grades grade ON grade.evaluation = selected.value
+      WHERE grade.school = {:school}${studentCondition}
+      ORDER BY grade.rowid
     ) g
   `).bind(params).one(row);
   return JSON.parse(row.payload);

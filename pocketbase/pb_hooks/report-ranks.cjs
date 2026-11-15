@@ -29,19 +29,19 @@ function reportRanks(app, options) {
         SELECT g.student, e.period, a.id AS assignment,
           a.coefficient,
           SUM((g.score * 1.0 / e.maximum) * 20.0 * e.weight) / SUM(e.weight) AS average
-        FROM teaching_assignments a
+        FROM json_each({:evaluations}) selected
+        CROSS JOIN evaluations e ON e.id = selected.value AND e.school = {:school}
+        JOIN teaching_assignments a ON a.id = e.assignment AND a.school = {:school}
         JOIN classes c ON c.id = a.classroom
           AND c.establishment_id = {:school} AND c.academic_year_id = {:year}
-        JOIN evaluations e ON e.assignment = a.id AND e.school = {:school}
         JOIN school_periods p ON p.id = e.period AND p.school = {:school} AND p.year = {:year}
-        JOIN school_grades g ON g.evaluation = e.id AND g.school = {:school}
+        CROSS JOIN school_grades g ON g.evaluation = e.id AND g.school = {:school}
         JOIN enrollments roster ON roster.student_id = g.student
           AND roster.establishment_id = {:school}
           AND roster.class_id = {:classroom} AND roster.academic_year_id = {:year}
         JOIN school_users pupil ON pupil.id = g.student AND pupil.establishment_id = {:school}
         WHERE a.school = {:school} AND a.classroom = {:classroom}
           AND e.published = 1 AND g.status = 'graded'
-          AND e.id IN (SELECT value FROM json_each({:evaluations}))
         GROUP BY g.student, e.period, a.id, a.coefficient
         HAVING SUM(e.weight) > 0
       ), averages AS (
