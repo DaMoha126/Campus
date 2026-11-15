@@ -1144,6 +1144,165 @@ test(
         },
       );
 
+      await t.test("SQL ranks match independent generated weighted references without leaking peers", async () => {
+        const baselineParent = ok(await state(tokens.parent2));
+        const allowedParentIds = new Set(baselineParent.links.map(x => x.student));
+        const laterPeriod = ok(await action(tokens.admin, "period", {
+          year: year.id, label: "Période comparaison SQL", starts_on: "2027-04-01", ends_on: "2027-06-30",
+        }));
+        const periods = [period, laterPeriod];
+        const french = ok(await state(tokens.admin)).subjects.find(x => x.name === "Français");
+        const science = ok(await record("subjects", { establishment_id: a.id, name: "Sciences comparaison SQL" }, tokens.admin));
+        const model = { enrollments: [], assignments: [], evaluations: [], grades: [] };
+        const children = [], classrooms = [];
+        let randomState = 0x5eeda;
+        const random = n => { randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0; return randomState % n; };
+        for (let c = 0; c < 2; c++) {
+          const classroom = ok(await record("classes", {
+            establishment_id: a.id, academic_year_id: year.id,
+            name: "SQL différentielle " + c, capacity: 10,
+          }, tokens.admin));
+          classrooms.push(classroom);
+          const pupils = [];
+          for (let i = 0; i < 5; i++) {
+            const pupil = ok(await record("school_users", {
+              establishment_id: a.id, role: "student", first_name: "SQL" + c + i,
+              last_name: "Privé", email: "sql" + c + i + "@fixture.invalid",
+              password, passwordConfirm: password,
+            }, root));
+            pupils.push(pupil);
+            model.enrollments.push(ok(await record("enrollments", {
+              establishment_id: a.id, academic_year_id: year.id, class_id: classroom.id,
+              student_id: pupil.id, enrolled_on: "2026-10-01",
+            }, tokens.admin)));
+          }
+          children.push(pupils);
+          // Distinct subject coefficients exercise averaging each assignment
+          // before weighting, rather than treating all evaluations equally.
+          for (let k = 0; k < 3; k++) {
+            const assignment = ok(await action(tokens.admin, "assignment", {
+              teacher: k === 1 ? users.teacher2.id : users.teacher.id,
+              classroom: classroom.id, subject: [subject.id, french.id, science.id][k],
+              coefficient: [0.5, 2.5, 5][k],
+            }));
+            model.assignments.push({ id: assignment.id, classroom: classroom.id, subject: [subject.id, french.id, science.id][k], coefficient: [0.5, 2.5, 5][k] });
+            for (let p = 0; p < periods.length; p++) for (let e = 0; e < 3; e++) {
+              const maximum = [10, 20, 100][random(3)], weight = [0.5, 1, 2.5][random(3)];
+              const evaluation = ok(await action(tokens.admin, "evaluation", {
+                assignment: assignment.id, period: periods[p].id,
+                title: "SQL " + c + k + p + e, held_on: p ? "2027-04-15" : "2026-10-18",
+                maximum, weight,
+              }));
+              Object.assign(evaluation, { assignment: assignment.id, period: periods[p].id, maximum, weight });
+              evaluation.published = e !== 2;
+              model.evaluations.push(evaluation);
+              let firstValue;
+              for (let i = 0; i < pupils.length; i++) {
+                let value = { status: ["graded", "graded", "graded", "absent", "exempt"][random(5)], score: random(maximum * 4 + 1) / 4 };
+                if (c === 0 && p === 0 && i < 2) value = { status: "graded", score: 0 };
+                if (c === 0 && p === 1 && i === 4) value = { status: "absent", score: 0 };
+                if (i === 0) firstValue = value;
+                if (c === 1 && p === 0 && i === 1) value = firstValue;
+                const grade = ok(await action(tokens.admin, "grade", {
+                  evaluation: evaluation.id, student: pupils[i].id,
+                  status: value.status, ...(value.status === "graded" ? { score: value.score } : {}),
+                  comment: "Commentaire SQL «é» <>& \" ' 😀\nLigne " + i,
+                }));
+                model.grades.push({ id: grade.id, evaluation: evaluation.id, student: pupils[i].id, status: value.status, score: value.status === "graded" ? value.score : 0, comment: "Commentaire SQL «é» <>& \" ' 😀\nLigne " + i });
+              }
+              if (evaluation.published) ok(await action(tokens.admin, "publish-evaluation", { id: evaluation.id, published: true }));
+            }
+          }
+          ok(await action(tokens.admin, "parent-link", { parent: users.parent2.id, student: pupils[0].id }));
+          allowedParentIds.add(pupils[0].id);
+        }
+        const average = (student, classroom, periodId) => {
+          const subjects = new Map();
+          for (const assignment of model.assignments.filter(x => x.classroom === classroom)) {
+            const evaluations = model.evaluations.filter(x => x.assignment === assignment.id && x.period === periodId && x.published);
+            let sum = 0, weight = 0;
+            for (const grade of model.grades) {
+              const evaluation = evaluations.find(x => x.id === grade.evaluation);
+              if (!evaluation || grade.student !== student || grade.status !== "graded") continue;
+              sum += grade.score / evaluation.maximum * 20 * evaluation.weight;
+              weight += evaluation.weight;
+            }
+            if (!weight) continue;
+            const previous = subjects.get(assignment.subject) || { sum: 0, weight: 0 };
+            previous.sum += sum / weight * assignment.coefficient;
+            previous.weight += assignment.coefficient;
+            subjects.set(assignment.subject, previous);
+          }
+          let sum = 0, weight = 0;
+          for (const subject of subjects.values()) { sum += subject.sum; weight += subject.weight; }
+          return weight ? sum / weight : null;
+        };
+        const expectedRanks = (studentIds, selectedClasses = classrooms.map(x => x.id)) => {
+          const rows = [];
+          for (const enrollment of model.enrollments.filter(x => studentIds.includes(x.student_id) && selectedClasses.includes(x.class_id))) {
+            const roster = model.enrollments.filter(x => x.class_id === enrollment.class_id);
+            for (const selectedPeriod of periods) {
+              const ownAverage = average(enrollment.student_id, enrollment.class_id, selectedPeriod.id);
+              if (ownAverage === null) continue;
+              const averages = roster.map(x => average(x.student_id, enrollment.class_id, selectedPeriod.id)).filter(x => x !== null);
+              rows.push({ student: enrollment.student_id, period: selectedPeriod.id, rank: 1 + averages.filter(x => x > ownAverage + 1e-9).length, class_size: averages.length });
+            }
+          }
+          return rows;
+        };
+        const canonical = rows => rows.map(x => JSON.stringify([x.student, x.period, x.rank, x.class_size])).sort();
+        const newIds = new Set(children.flat().map(x => x.id));
+        const studentTokens = [];
+        for (let c = 0; c < children.length; c++) for (let i = 0; i < children[c].length; i++) {
+          const pupil = children[c][i], token = (await f.login("sql" + c + i + "@fixture.invalid")).token;
+          studentTokens.push({ pupil, token });
+          const payload = ok(await state(token));
+          assert.deepEqual(canonical(payload.reportRanks), canonical(expectedRanks([pupil.id])), "generated ranks for " + c + "/" + i);
+          const publishedIds = new Set(model.evaluations.filter(x => x.published).map(x => x.id));
+          const expectedGrades = model.grades.filter(x => x.student === pupil.id && publishedIds.has(x.evaluation));
+          const canonicalGrades = rows => rows.map(x => JSON.stringify([x.id, x.evaluation, x.student, x.score, x.status, x.comment])).sort();
+          assert.deepEqual(canonicalGrades(payload.grades), canonicalGrades(expectedGrades), "grade values and text survive serialization");
+          assert.ok(payload.grades.every(x => x.student === pupil.id));
+          assert.ok(payload.people.filter(x => x.role === "student").every(x => x.id === pupil.id));
+        }
+        assert.ok(expectedRanks([children[0][0].id]).find(x => x.period === period.id).rank > 1, "zero is a ranked mark, not missing data");
+        assert.equal(expectedRanks([children[0][4].id]).some(x => x.period === laterPeriod.id), false, "all absent yields no rank");
+        const parent = ok(await state(tokens.parent2));
+        const targets = children.map(x => x[0].id);
+        assert.deepEqual(canonical(parent.reportRanks.filter(x => newIds.has(x.student))), canonical(expectedRanks(targets)));
+        assert.ok(parent.reportRanks.every(x => allowedParentIds.has(x.student)));
+        assert.ok(parent.grades.every(x => allowedParentIds.has(x.student)));
+        assert.ok(parent.people.filter(x => x.role === "student").every(x => allowedParentIds.has(x.id)));
+        const scoped = ok(await req("etudia/state?page=reports&classroom=auto&student=" + targets[1] + "&period=" + laterPeriod.id, undefined, tokens.parent2));
+        assert.deepEqual(canonical(scoped.reportRanks.filter(x => newIds.has(x.student))), canonical(expectedRanks(targets, [classrooms[1].id])));
+        const target = studentTokens[0], evaluation = model.evaluations.find(x => x.published && x.period === period.id);
+        const changed = ok(await action(tokens.admin, "grade", { evaluation: evaluation.id, student: target.pupil.id, status: "graded", score: evaluation.maximum }));
+        Object.assign(model.grades.find(x => x.id === changed.id), { status: "graded", score: evaluation.maximum });
+        assert.deepEqual(canonical(ok(await state(target.token)).reportRanks), canonical(expectedRanks([target.pupil.id])), "a saved mark changes ranks immediately");
+        ok(await action(tokens.admin, "publish-evaluation", { id: evaluation.id, published: false }));
+        evaluation.published = false;
+        const unpublished = ok(await state(target.token));
+        assert.deepEqual(canonical(unpublished.reportRanks), canonical(expectedRanks([target.pupil.id])), "unpublishing changes ranks immediately");
+        assert.ok(unpublished.grades.every(x => x.evaluation !== evaluation.id));
+        // Corrupted imported data must not cross the school predicate, even with
+        // a relation pointing at a valid evaluation and pupil in this school.
+        const foreignGradeEvaluation = ok(await action(tokens.admin, "evaluation", {
+          assignment: model.assignments[0].id, period: period.id,
+          title: "Référence corrompue isolée", held_on: "2026-10-18", maximum: 20, weight: 20,
+        }));
+        ok(await action(tokens.admin, "publish-evaluation", { id: foreignGradeEvaluation.id, published: true }));
+        ok(await record("school_grades", { school: b.id, evaluation: foreignGradeEvaluation.id, student: target.pupil.id, status: "graded", score: 20 }, root));
+        const afterForeignGrade = ok(await state(target.token));
+        assert.deepEqual(canonical(afterForeignGrade.reportRanks), canonical(expectedRanks([target.pupil.id])));
+        assert.ok(!afterForeignGrade.grades.some(x => x.evaluation === foreignGradeEvaluation.id));
+        const moved = model.enrollments.find(x => x.student_id === target.pupil.id);
+        const transfer = ok(await req("collections/enrollments/records/" + moved.id, { class_id: classrooms[1].id }, tokens.admin, "PATCH"));
+        Object.assign(moved, transfer);
+        const afterTransfer = ok(await state(target.token));
+        assert.deepEqual(canonical(afterTransfer.reportRanks), canonical(expectedRanks([target.pupil.id])), "old-class grades do not create a rank in the new class");
+        assert.ok(afterTransfer.grades.some(x => model.grades.some(g => g.id === x.id)), "historical published grades remain visible after transfer");
+      });
+
       await t.test("scoped modules preserve full-state permissions and data", async () => {
         const pages = {
           overview: ["homework", "attendance", "announcements"],

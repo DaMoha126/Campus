@@ -278,7 +278,7 @@ function state(app, auth, options = {}) {
     "tuition_fee",
     "previous_classes",
   ], family ? recordScope("student_id", students, "stateStudent") : {});
-  let allEnrollments = enrollments;
+  const allEnrollments = enrollments;
   let assignments = all(
     app,
     "teaching_assignments",
@@ -295,9 +295,6 @@ function state(app, auth, options = {}) {
           .filter((x) => students.includes(x.student_id))
           .flatMap((x) => [x.class_id, ...(x.previous_classes || [])]);
   const classroomIdSet = new Set(classroomIds);
-  if (family && wants("reportRanks"))
-    allEnrollments = all(app, "enrollments", a.school, ["student_id", "class_id", "academic_year_id"],
-      recordScope("class_id", enrollments.map(x => x.class_id), "stateRosterClass"));
   if (a.role === "teacher")
     students = enrollments
       .filter((x) =>
@@ -428,7 +425,7 @@ function state(app, auth, options = {}) {
       const pupil = d.people.find(p => p.role === "student" && p.id === options.student) || d.people.find(p => p.role === "student");
       const period = d.periods.find(p => p.id === options.period) || d.periods[0];
       const enrollment = d.enrollments.find(e => e.student_id === pupil?.id && e.academic_year_id === period?.year);
-      const roster = enrollment ? allEnrollments.filter(e => e.class_id === enrollment.class_id && e.academic_year_id === enrollment.academic_year_id) : [];
+      const roster = enrollment && !family ? allEnrollments.filter(e => e.class_id === enrollment.class_id && e.academic_year_id === enrollment.academic_year_id) : [];
       // Include transfer history for every pupil when batch-printing this class.
       // The visible enrollments preserve that history for staff; families only print their children.
       academicClassIds = enrollment ? [...new Set([enrollment.class_id, ...(enrollment.previous_classes || []), ...roster.flatMap(e => e.previous_classes || [])])] : [];
@@ -443,73 +440,21 @@ function state(app, auth, options = {}) {
       (x) => (isStaff || assignmentIds.has(x.assignment)) && (!academicAssignments || academicAssignments.has(x.assignment)) && (isStaff || a.role === "teacher" || x.published),
     ) : [];
   const evaluationById = new Map(d.evaluations.map((evaluation) => [evaluation.id, evaluation]));
-  // Families need classmates' published grades to derive rank, never to expose them.
-  // Fetch that bounded class scope once; use the visible-pupil set for the payload.
-  const allGrades = wants("grades") ? all(app, "school_grades", a.school, fields.school_grades,
-    joinScopes(assignmentScope("evaluation.assignment."), academicScope("evaluation.assignment."), family ? { condition: "evaluation.published=true" } : {}, family && !wants("reportRanks") ? recordScope("student", students, "stateStudent") : {})) : [];
+  // Families only load their own grades. Classmates contribute to ranks inside SQL.
+  const packedGrades = wants("grades")
+    ? require(__hooks + "/report-grades.cjs")(app, a.school, d.evaluations, family ? students : undefined)
+    : [];
+  const allGrades = packedGrades === null
+    ? all(app, "school_grades", a.school, fields.school_grades,
+        joinScopes(assignmentScope("evaluation.assignment."), academicScope("evaluation.assignment.")))
+    : packedGrades;
   d.grades = allGrades.filter((grade) => evaluationById.has(grade.evaluation) && (isStaff || studentIdSet.has(grade.student)));
-  d.reportRanks = [];
-  if (family && wants("reportRanks")) {
-    const assignmentById = new Map(assignments.map((assignment) => [assignment.id, assignment])),
-      totalsByStudent = new Map(), classAssignments = new Map(), rosters = new Map(), periodsByYear = new Map();
-    for (const assignment of assignments) {
-      if (!classAssignments.has(assignment.classroom)) classAssignments.set(assignment.classroom, []);
-      classAssignments.get(assignment.classroom).push(assignment);
-    }
-    for (const enrollment of allEnrollments) {
-      const key = enrollment.class_id + ":" + enrollment.academic_year_id;
-      if (!rosters.has(key)) rosters.set(key, []);
-      rosters.get(key).push(enrollment);
-    }
-    for (const period of d.periods) {
-      if (!periodsByYear.has(period.year)) periodsByYear.set(period.year, []);
-      periodsByYear.get(period.year).push(period);
-    }
-    // One traversal of grades replaces a full scan per pupil, assignment and term.
-    for (const grade of allGrades) {
-      if (grade.status !== "graded") continue;
-      const evaluation = evaluationById.get(grade.evaluation);
-      if (!evaluation || !assignmentById.has(evaluation.assignment)) continue;
-      if (!totalsByStudent.has(grade.student)) totalsByStudent.set(grade.student, new Map());
-      const totals = totalsByStudent.get(grade.student), key = evaluation.assignment + ":" + evaluation.period,
-        previous = totals.get(key) || { weighted: 0, weights: 0 };
-      previous.weighted += (grade.score / evaluation.maximum) * 20 * evaluation.weight;
-      previous.weights += evaluation.weight;
-      totals.set(key, previous);
-    }
-    const averagesByClassPeriod = new Map();
-    for (const enrollment of enrollments) {
-      if (!studentIdSet.has(enrollment.student_id)) continue;
-      for (const period of periodsByYear.get(enrollment.academic_year_id) || []) {
-        const rosterKey = enrollment.class_id + ":" + enrollment.academic_year_id,
-          key = rosterKey + ":" + period.id;
-        if (!averagesByClassPeriod.has(key)) {
-          const averages = [];
-          for (const peer of rosters.get(rosterKey) || []) {
-            const totals = totalsByStudent.get(peer.student_id), bySubject = new Map();
-            if (!totals) continue;
-            for (const assignment of classAssignments.get(enrollment.class_id) || []) {
-              const total = totals.get(assignment.id + ":" + period.id);
-              if (!total || !total.weights) continue;
-              const previous = bySubject.get(assignment.subject) || { sum: 0, weight: 0 };
-              previous.sum += (total.weighted / total.weights) * assignment.coefficient;
-              previous.weight += assignment.coefficient;
-              bySubject.set(assignment.subject, previous);
-            }
-            let sum = 0, weight = 0;
-            for (const value of bySubject.values()) { sum += value.sum; weight += value.weight; }
-            if (weight) averages.push({ student: peer.student_id, average: sum / weight });
-          }
-          averagesByClassPeriod.set(key, averages);
-        }
-        const averages = averagesByClassPeriod.get(key), ownAverage = averages.find((x) => x.student === enrollment.student_id);
-        if (!ownAverage) continue;
-        d.reportRanks.push({ student: enrollment.student_id, period: period.id,
-          rank: 1 + averages.filter((x) => x.average > ownAverage.average + 1e-9).length,
-          class_size: averages.length });
-      }
-    }
-  }
+  d.reportRanks = family && wants("reportRanks")
+    ? require(__hooks + "/report-ranks.cjs")(app, {
+        school: a.school, students, enrollments, periods: d.periods,
+        assignments, evaluations: d.evaluations, academicClassIds,
+      })
+    : [];
   for (const [name, key] of [
     ["homework", "homework"],
     ["lesson_log", "lessons"],
