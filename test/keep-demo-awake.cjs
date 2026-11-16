@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { configuration, check } = require('../scripts/keep-demo-awake.cjs');
 
 test('external monitor stays bounded and accepts only the health endpoint', () => {
-  assert.equal(configuration({}).intervalMs, 300000);
+  assert.equal(configuration({}).intervalMs, 150000);
   for (const url of ['http://example.com/api/health', 'https://x.invalid/api/etudia/state', 'https://user:secret@x.invalid/api/health', 'https://x.invalid/api/health?token=secret'])
     assert.throws(() => configuration({ ETUDIA_MONITOR_URL: url }));
   for (const minutes of ['0', '-1', '0.01', '11', 'NaN'])

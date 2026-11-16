@@ -8,7 +8,7 @@ function configuration(env = process.env) {
   if ((url.protocol !== 'https:' && !(local && url.protocol === 'http:')) ||
       url.username || url.password || url.search || url.hash || url.pathname !== '/api/health')
     throw new Error('Utiliser une URL HTTPS /api/health sans identifiants ni paramètres.');
-  const minutes = Number(env.ETUDIA_MONITOR_MINUTES || 5);
+  const minutes = Number(env.ETUDIA_MONITOR_MINUTES || 2.5);
   if (!Number.isFinite(minutes) || minutes < 1 || minutes > 10)
     throw new Error('L’intervalle doit être compris entre 1 et 10 minutes.');
   return { url: url.href, intervalMs: minutes * 60000 };
@@ -41,13 +41,14 @@ async function main() {
   try {
     console.log('Moniteur externe Étudia : un contrôle toutes les ' + config.intervalMs / 60000 + ' minutes. Ctrl+C pour arrêter.');
     do {
+      const checkedAt = performance.now();
       const result = await check(config.url, controller.signal);
       if (controller.signal.aborted) break;
       console.log(new Date().toISOString() + ' — ' + (result.healthy ? 'API disponible' : 'API indisponible') +
         ' — ' + (result.status ? 'HTTP ' + result.status : result.error) + ' — ' + result.elapsedMs + ' ms');
       if (once) { process.exitCode = result.healthy ? 0 : 1; break; }
       // No overlapping requests or rapid retries on failure.
-      await delay(config.intervalMs, undefined, { signal: controller.signal });
+      await delay(Math.max(0, config.intervalMs - (performance.now() - checkedAt)), undefined, { signal: controller.signal });
     } while (!controller.signal.aborted);
   } catch (error) {
     if (!controller.signal.aborted) throw error;
