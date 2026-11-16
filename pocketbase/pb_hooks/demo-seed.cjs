@@ -3,14 +3,27 @@ function seed(app, password) {
     throw new Error("A demo password of at least 12 characters is required.");
   // Only seed a fresh, explicitly isolated demo database. Never replace school data.
   if (app.findAllRecords("establishments").length) return;
+  const referenceDate = new Date();
+  const relativeDay = (offset) => {
+    const value = new Date(referenceDate.getTime());
+    value.setUTCDate(value.getUTCDate() + offset);
+    return value.toISOString().slice(0, 10);
+  };
   app.runInTransaction((tx) => {
+    // These isolated demo accounts intentionally share one generated password.
+    // Reuse its real hash to keep free-host cold starts short.
+    let passwordHash;
     const save = (name, fields) => {
       const record = new Record(tx.findCollectionByNameOrId(name));
       for (const key of Object.keys(fields)) {
-        if (key === "password") record.setPassword(fields[key]);
+        if (key === "password") {
+          if (passwordHash) record.setRaw("password", passwordHash);
+          else record.setPassword(fields[key]);
+        }
         else record.set(key, fields[key]);
       }
       tx.save(record);
+      if (name === "school_users" && !passwordHash) passwordHash = record.getRaw("password");
       return record;
     };
     const firstNames = [
@@ -73,7 +86,7 @@ function seed(app, password) {
         });
       const admins = ["Direction", "Scolarité", "Comptabilité"].map((name, i) =>
         person(
-          "administrator",
+          ["administrator", "school_life", "accountant"][i],
           i,
           i === 0 ? "DEMOADMIN" + suffix : `E${s + 1}ADMIN${i + 1}`,
           name,
@@ -131,7 +144,7 @@ function seed(app, password) {
           capacity: 30,
         }),
       );
-      const subjects = ["Mathématiques", "Français", "Anglais"].map((name) =>
+      const subjects = ["Mathématiques", "Français", "Anglais", "Histoire-Géographie", "Sciences de la vie et de la Terre", "Physique-Chimie"].map((name) =>
         tx.findFirstRecordByFilter(
           "subjects",
           "establishment_id={:school} && name={:name}",
@@ -194,9 +207,9 @@ function seed(app, password) {
             amount: 25000,
             label: `Échéance fictive ${q + 1}/4`,
           });
-        save("report_comments", {
+        for (const period of periods.slice(0, 2)) save("report_comments", {
           ...common,
-          period: periods[0].id,
+          period: period.id,
           student: student.id,
           comment:
             [
@@ -210,7 +223,7 @@ function seed(app, password) {
       for (let c = 0; c < classes.length; c++) {
         const classStudents = students.slice(c * 10, c * 10 + 10);
         for (let m = 0; m < subjects.length; m++) {
-          const teacher = teachers[m + (c % 2) * 3];
+          const teacher = teachers[m];
           const assignment = save("teaching_assignments", {
             ...common,
             teacher: teacher.id,
@@ -218,48 +231,48 @@ function seed(app, password) {
             subject: subjects[m].id,
             coefficient: m === 2 ? 2 : 4,
           });
-          const start = String(8 + c).padStart(2, "0") + ":00";
-          const end = String(9 + c).padStart(2, "0") + ":00";
-          save("timetable_slots", {
-            ...common,
-            assignment: assignment.id,
-            weekday: m + 1,
-            start_time: start,
-            end_time: end,
-            room: "Salle " + (c + 1),
-            week_type: "all",
-            valid_from: "",
-            valid_until: "",
-          });
-          for (let e = 0; e < 2; e++) {
-            const evaluation = save("evaluations", {
-              ...common,
-              assignment: assignment.id,
-              period: periods[0].id,
-              title:
-                ["Interrogation", "Devoir surveillé"][e] +
-                " — " +
-                subjects[m].getString("name"),
-              held_on: ["2026-10-12", "2026-10-20"][e],
-              maximum: 20,
-              weight: e + 1,
-              published: true,
+          const times = [["08:00", "09:00"], ["09:00", "10:00"], ["10:15", "11:15"], ["11:15", "12:15"]];
+          // Each class has 20 sessions, and teachers never teach two classes at once.
+          for (let slot = 0; slot < 20; slot++) {
+            if ((c + slot) % subjects.length !== m) continue;
+            save("timetable_slots", {
+              ...common, assignment: assignment.id,
+              weekday: Math.floor(slot / 4) + 1,
+              start_time: times[slot % 4][0], end_time: times[slot % 4][1],
+              room: "Salle " + (c + 1), week_type: "all", valid_from: "", valid_until: "",
             });
-            classStudents.forEach((student, j) => {
-              const absent = j === 9 && m === 1 && e === 1;
-              const score =
-                c === 0 && j === 0
-                  ? 16
-                  : 6 + ((j * 3 + c + m * 2 + e + s) % 14);
-              save("school_grades", {
+          }
+          for (let term = 0; term < 2; term++) {
+            for (let e = 0; e < 2; e++) {
+              const evaluation = save("evaluations", {
                 ...common,
-                evaluation: evaluation.id,
-                student: student.id,
-                score: absent ? 0 : score,
-                status: absent ? "absent" : "graded",
-                comment: absent ? "Absence fictive." : "Évaluation fictive.",
+                assignment: assignment.id,
+                period: periods[term].id,
+                title:
+                  ["Interrogation", "Devoir surveillé"][e] +
+                  " — " +
+                  subjects[m].getString("name"),
+                held_on: term === 0 ? ["2026-10-12", "2026-10-20"][e] : ["2027-01-12", "2027-01-20"][e],
+                maximum: 20,
+                weight: e + 1,
+                published: true,
               });
-            });
+              classStudents.forEach((student, j) => {
+                const absent = j === 9 && m === 1 && e === 1;
+                const score =
+                  c === 0 && j === 0
+                    ? 16 + term
+                    : Math.min(20, 6 + ((j * 3 + c + m * 2 + e + s) % 14) + term);
+                save("school_grades", {
+                  ...common,
+                  evaluation: evaluation.id,
+                  student: student.id,
+                  score: absent ? 0 : score,
+                  status: absent ? "absent" : "graded",
+                  comment: absent ? "Absence fictive." : "Évaluation fictive.",
+                });
+              });
+            }
           }
           if (m === 0) {
             save("evaluations", {
@@ -296,44 +309,34 @@ function seed(app, password) {
                 });
             });
           }
-          const homework = save("homework", {
-            ...common,
-            assignment: assignment.id,
-            title: "Exercices — " + subjects[m].getString("name"),
-            instructions: [
-              "Résoudre 2x = 6 et expliquer les étapes.",
-              "Rédiger un paragraphe de cinq phrases sur une journée à l’école.",
-              "Write five sentences introducing a fictional character.",
-            ][m],
-            due_on: "2026-11-02",
-          });
-          classStudents.slice(0, 5).forEach((student, j) =>
-            save("submissions", {
-              ...common,
-              homework: homework.id,
-              student: student.id,
-              answer: [
-                "Ma réponse de démonstration.",
-                "Voici les étapes de mon raisonnement.",
-              ][j % 2],
-              feedback:
-                j % 2 === 0
-                  ? "Bon travail. Exemple de retour du professeur."
-                  : "",
-            }),
-          );
-          save("lesson_log", {
-            ...common,
-            assignment: assignment.id,
-            held_on: "2026-10-26",
-            title: [
-              "Équations du premier degré",
-              "Le paragraphe argumenté",
-              "Introducing yourself",
-            ][m],
-            content:
-              "Séance fictive : rappel du cours, exercices guidés et correction collective.",
-          });
+          const topics = [
+            ["Équations du premier degré", "Résoudre 2x + 4 = 10 puis 3x − 2 = 7. Détailler chaque étape."],
+            ["Le paragraphe argumenté", "Rédiger dix lignes sur la place de la lecture, avec deux arguments et un exemple."],
+            ["Introducing yourself", "Write ten sentences introducing a fictional character: family, hobbies and school."],
+            ["Repères géographiques", "Placer cinq pays d’Afrique de l’Ouest sur un fond de carte et indiquer leurs capitales."],
+            ["Les êtres vivants et leur milieu", "Observer une plante, réaliser un schéma légendé et expliquer ses besoins."],
+            ["Mesures et unités", "Convertir des longueurs et des masses, puis présenter les résultats avec leurs unités."],
+          ];
+          for (let h = 0; h < 3; h++) {
+            const homework = save("homework", {
+              ...common, assignment: assignment.id,
+              title: ["Exercices d’application", "Travail à préparer", "Entraînement corrigé"][h] + " — " + subjects[m].getString("name"),
+              instructions: topics[m][1] + " Travail de démonstration, sans données réelles.",
+              due_on: relativeDay(h === 2 ? -7 : 2 + h * 7 + (c + m) % 5),
+            });
+            classStudents.slice(0, [5, 2, 4][h]).forEach((student, j) =>
+              save("submissions", {
+                ...common, homework: homework.id, student: student.id,
+                answer: "Travail fictif : " + topics[m][0] + ". Voici ma démarche, mes exemples et ma conclusion.",
+                feedback: h === 2 || j % 2 === 0 ? "Démarche claire. Revoir la précision du vocabulaire et justifier les réponses. (Retour fictif.)" : "",
+              }),
+            );
+            save("lesson_log", {
+              ...common, assignment: assignment.id,
+              held_on: relativeDay(-10 + h * 3), title: topics[m][0] + " — séance " + (h + 1),
+              content: "Séance fictive : rappel des notions, activité guidée, travail en groupe et correction. À retenir : " + topics[m][1],
+            });
+          }
         }
       }
       [
@@ -391,12 +394,12 @@ function seed(app, password) {
         entity: "establishments",
         record_id: school.id,
         summary:
-          "Jeu fictif : 40 élèves, 20 parents, 6 enseignants, 3 administrateurs et 4 classes.",
+          "Jeu fictif : 40 élèves, 20 parents, 6 enseignants, direction/scolarité/comptabilité et 4 classes. Semaines de 20 cours et résultats sur deux trimestres.",
       });
     }
   });
   console.log(
-    "Demo dataset ready: 3 schools, 120 students, 60 parents, 18 teachers, 9 administrators.",
+    "Demo dataset ready: 3 schools, 120 students, 60 parents, 18 teachers, 9 staff, 240 timetable slots, 216 homework tasks, 2880 grades.",
   );
 }
 module.exports = { seed };

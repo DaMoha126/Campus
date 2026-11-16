@@ -86,17 +86,17 @@ test(
       const admin = await state("DEMOADMIN");
       assert.equal(admin.subjects.length, 15);
       assert.equal(admin.people.length, 69);
-      assert.equal(admin.assignments.length, 12);
-      assert.equal(admin.timetable.length, 12);
+      assert.equal(admin.assignments.length, 24);
+      assert.equal(admin.timetable.length, 80);
       assert.equal(admin.classes.length, 4);
       assert.equal(admin.enrollments.length, 40);
-      assert.equal(admin.grades.length, 240);
+      assert.equal(admin.grades.length, 960);
       assert.equal(admin.people.filter((x) => x.role === "student").length, 40);
       assert.equal(admin.people.filter((x) => x.role === "parent").length, 20);
       assert.equal(admin.people.filter((x) => x.role === "teacher").length, 6);
       assert.equal(
         admin.people.filter((x) => x.role === "administrator").length,
-        3,
+        1,
       );
       const school2 = await state("DEMOADMIN2"),
         school3 = await state("DEMOADMIN3");
@@ -116,15 +116,32 @@ test(
       assert.ok(admin.reversals.length > 0);
       assert.ok(admin.attendance.length > 0);
       assert.ok(admin.evaluations.some((x) => !x.published));
+      assert.equal(admin.homework.length, 72);
+      assert.equal(admin.lessons.length, 72);
+      assert.equal(admin.submissions.length, 264);
+      assert.equal(admin.reportComments.length, 80);
+      assert.equal(new Set(admin.evaluations.filter(e => e.published).map(e => e.period)).size, 2);
+      const today = new Date().toISOString().slice(0, 10);
+      assert.ok(admin.homework.some(h => h.due_on > today));
+      assert.ok(admin.homework.some(h => h.due_on < today));
+      for (const classroom of admin.classes) {
+        const assignments = new Set(admin.assignments.filter(a => a.classroom === classroom.id).map(a => a.id));
+        const slots = admin.timetable.filter(slot => assignments.has(slot.assignment));
+        assert.equal(slots.length, 20);
+        assert.equal(new Set(slots.map(slot => slot.weekday)).size, 5);
+      }
+      assert.equal(admin.people.filter(x => x.role === "school_life").length, 1);
+      assert.equal(admin.people.filter(x => x.role === "accountant").length, 1);
+
       const principal = admin.people.find((x) => x.login_id === "DEMOELEVE");
       assert.ok(principal);
       assert.equal(
         admin.grades.filter((x) => x.student === principal.id).length,
-        6,
+        24,
       );
       assert.ok(
         admin.grades
-          .filter((x) => x.student === principal.id)
+          .filter((x) => x.student === principal.id && admin.evaluations.find(e => e.id === x.evaluation)?.period === admin.periods.find(p => p.label === "Trimestre 1").id)
           .every((x) => x.score === 16),
       );
       const { DatabaseSync } = require("node:sqlite");
@@ -139,7 +156,7 @@ test(
       );
       assert.equal(
         db.prepare("SELECT COUNT(*) n FROM school_grades").get().n,
-        720,
+        2880,
       );
       assert.equal(
         db
@@ -190,11 +207,11 @@ test(
           assert.ok(scoped.evaluations.every((x) => x.published));
         if (id === "DEMOPARENT") {
           assert.equal(scoped.enrollments.length, 2);
-          assert.equal(scoped.grades.length, 12);
+          assert.equal(scoped.grades.length, 48);
         }
         if (id === "DEMOELEVE") {
           assert.equal(scoped.enrollments.length, 1);
-          assert.equal(scoped.grades.length, 6);
+          assert.equal(scoped.grades.length, 24);
         }
       }
       await new Promise((r) => setTimeout(r, 3500));
@@ -277,6 +294,11 @@ test(
           );
           previousNames = [...new Set(shownNames)];
         }
+        await page.getByRole("button", { name: "Emploi du temps", exact: true }).click();
+        await page.locator("#timetable-printable .schedule-course").first().waitFor();
+        assert.equal(await page.locator("#timetable-printable .schedule-course").count(), 20);
+        assert.equal(await page.locator("#timetable-printable .schedule-column").count(), 5);
+        await page.screenshot({ path: "/tmp/etudia-demo-timetable.png", fullPage: true });
         await page
           .getByRole("button", { name: "Bulletins", exact: true })
           .click();
@@ -289,6 +311,10 @@ test(
         await page
           .locator("#school-report .report-summary article").filter({ hasText: "Moyenne générale" }).getByText("16.00 /20", { exact: true })
           .waitFor();
+        assert.equal(await page.locator("#school-report tbody tr").count(), 6);
+        await page.screenshot({ path: "/tmp/etudia-demo-report.png", fullPage: true });
+        await page.locator("#report-period").selectOption(admin.periods.find(x => x.label === "Trimestre 2").id);
+        await page.locator("#school-report .report-summary article").filter({ hasText: "Moyenne générale" }).getByText("17.00 /20", { exact: true }).waitFor();
         await browser.close();
         browser = null;
       }
